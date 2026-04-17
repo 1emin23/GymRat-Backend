@@ -32,6 +32,11 @@ app.use("/api/auth", require("./src/routes/authRoutes")); // Giriş-Kayıt (Publ
 app.use("/api/users", require("./src/routes/userRoutes")); // Profil-Ayarlar (Private/Korumalı)
 app.use("/api/gyms", require("./src/routes/gymRoutes.js"));
 
+console.log(
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MjAxLCJyb2xlIjoidXNlciIsImlhdCI6MTc3NjQ1MTY3NCwiZXhwIjoxNzc5MDQzNjc0fQ.e11gRPSiX1YwEMwHsjGoqAO6o0kE1CVpXG6S5ofhDEw" ===
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MjAxLCJyb2xlIjoidXNlciIsImlhdCI6MTc3NjQ1MTY3NCwiZXhwIjoxNzc5MDQzNjc0fQ.e11gRPSiX1YwEMwHsjGoqAO6o0kE1CVpXG6S5ofhDEw",
+);
+
 // 4. Global Hata Yönetimi (Hata mesajlarını tek bir yerden kontrol edelim)
 app.use((err, req, res, next) => {
   console.error(err.stack);
