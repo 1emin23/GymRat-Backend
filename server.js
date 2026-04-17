@@ -1,15 +1,16 @@
 const express = require("express");
 const cors = require("cors");
+const authRoutes = require("./src/routes/authRoutes");
 require("dotenv").config();
 
 // db.js içindeki pool (bağlantı havuzu) yapısını çekiyoruz
 const pool = require("./src/config/db");
-
 const app = express();
 
 // 1. Middlewares
 app.use(cors()); // Farklı portlardan (örn: React 3000) gelen istekleri kabul etmek için
 app.use(express.json()); // JSON formatındaki istek gövdelerini (body) okuyabilmek için
+app.use(express.static("public"));
 
 // 2. Database Connection Check
 // Uygulama başlarken db.js zaten bağlantıyı test ediyor,
@@ -24,8 +25,11 @@ pool.query("SELECT NOW()", (err, res) => {
 
 // 3. Ana Route (Test için)
 app.get("/", (req, res) => {
-  res.json({ message: "GymWallet API Yayında!" });
+  console.log("first");
+  res.send("GymWallet API Yayında!");
 });
+app.use("/api/auth", require("./src/routes/authRoutes")); // Giriş-Kayıt (Public)
+app.use("/api/users", require("./src/routes/userRoutes")); // Profil-Ayarlar (Private/Korumalı)
 
 // 4. Global Hata Yönetimi (Hata mesajlarını tek bir yerden kontrol edelim)
 app.use((err, req, res, next) => {

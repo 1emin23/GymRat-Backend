@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>GymWallet | Dashboard</title>
+</head>
+
+<body>
+    <h2 id="welcome">Yükleniyor...</h2>
+    <p id="role"></p>
+    <button onclick="logout()">Çıkış Yap</button>
+
+    <script>
+        async function getDashboard() {
+            const token = localStorage.getItem('token');
+            if (!token) window.location.href = '/login.html';
+
+            const res = await fetch('/api/auth/profile', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+
+            if (res.ok) {
+                const data = await res.json();
+                document.getElementById('welcome').innerText = `Hoş geldin, ${data.user.id} ID'li kullanıcı!`;
+                document.getElementById('role').innerText = `Yetki Seviyen: ${data.user.role}`;
+            } else {
+                alert("Oturum süresi dolmuş!");
+                logout();
+            }
+        }
+
+        function logout() {
+            localStorage.clear();
+            window.location.href = '/login.html';
+        }
+
+        getDashboard();
+    </script>
+</body>
+
+</html>

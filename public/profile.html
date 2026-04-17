@@ -1,0 +1,34 @@
+<div id="profileCard">
+    <h2>Profil Bilgilerim</h2>
+    <p>Ad: <span id="userName">...</span></p>
+    <p>Bakiye: <span id="balance">...</span> ₺</p>
+    <p>Rol: <span id="userRole">...</span></p>
+</div>
+
+<script>
+    async function loadProfile() {
+        console.log("loadProfile")
+        const token = localStorage.getItem('token');
+        console.log("token", token)
+        if (!token) window.location.href = '/login.html';
+
+        const res = await fetch('/api/users/profile', {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${token}`, // "Bearer"dan sonra mutlaka bir boşluk olmalı!
+                'Content-Type': 'application/json'
+            }
+        });
+
+        const data = await res.json();
+        if (data.success) {
+            document.getElementById('userName').innerText = data.user.full_name;
+            document.getElementById('balance').innerText = data.user.wallet_balance;
+            document.getElementById('userRole').innerText = data.user.role;
+        } else {
+            localStorage.clear();
+            window.location.href = '/login.html';
+        }
+    }
+    loadProfile();
+</script>
