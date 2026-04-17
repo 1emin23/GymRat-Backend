@@ -30,6 +30,7 @@ app.get("/", (req, res) => {
 });
 app.use("/api/auth", require("./src/routes/authRoutes")); // Giriş-Kayıt (Public)
 app.use("/api/users", require("./src/routes/userRoutes")); // Profil-Ayarlar (Private/Korumalı)
+app.use("/api/gyms", require("./src/routes/gymRoutes.js"));
 
 // 4. Global Hata Yönetimi (Hata mesajlarını tek bir yerden kontrol edelim)
 app.use((err, req, res, next) => {
