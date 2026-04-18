@@ -32,6 +32,7 @@ app.use("/api/auth", require("./src/routes/authRoutes")); // Giriş-Kayıt (Publ
 app.use("/api/users", require("./src/routes/userRoutes")); // Profil-Ayarlar (Private/Korumalı)
 app.use("/api/gyms", require("./src/routes/gymRoutes.js"));
 app.use("/api/bookings", require("./src/routes/bookingRoutes"));
+app.use("/api/wallet", require("./src/routes/walletRoutes"));
 
 // 4. Global Hata Yönetimi (Hata mesajlarını tek bir yerden kontrol edelim)
 app.use((err, req, res, next) => {
@@ -42,6 +43,10 @@ app.use((err, req, res, next) => {
     error: process.env.NODE_ENV === "development" ? err.message : {},
   });
 });
+
+// @desc    Cüzdana bakiye yükle (Simülasyon)
+// @route   POST /api/wallet/deposit
+// @access  Private
 
 // 5. Port Dinleme
 const PORT = process.env.PORT || 5000;
