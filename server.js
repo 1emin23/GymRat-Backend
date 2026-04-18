@@ -33,6 +33,7 @@ app.use("/api/users", require("./src/routes/userRoutes")); // Profil-Ayarlar (Pr
 app.use("/api/gyms", require("./src/routes/gymRoutes.js"));
 app.use("/api/bookings", require("./src/routes/bookingRoutes"));
 app.use("/api/wallet", require("./src/routes/walletRoutes"));
+app.use("/api/analytics", require("./src/routes/analyticsRoutes"));
 
 // 4. Global Hata Yönetimi (Hata mesajlarını tek bir yerden kontrol edelim)
 app.use((err, req, res, next) => {
