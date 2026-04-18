@@ -28,7 +28,9 @@ const createGym = async (req, res) => {
 // @route   GET /api/gyms
 const getAllGyms = async (req, res) => {
   try {
-    const gyms = await pool.query("SELECT * FROM gyms");
+    const gyms = await pool.query(
+      "SELECT g.*, AVG(r.rating) as avg_rating, COUNT(r.id) as review_count FROM gyms g LEFT JOIN reviews r ON g.id = r.gym_id GROUP BY g.id;",
+    );
     res.json({ success: true, count: gyms.rows.length, data: gyms.rows });
   } catch (error) {
     res.status(500).json({ message: "Salonlar getirilemedi." });
