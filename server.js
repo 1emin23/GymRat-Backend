@@ -1,6 +1,5 @@
 const express = require("express");
 const cors = require("cors");
-const authRoutes = require("./src/routes/authRoutes");
 require("dotenv").config();
 
 // db.js içindeki pool (bağlantı havuzu) yapısını çekiyoruz

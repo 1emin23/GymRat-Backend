@@ -19,7 +19,7 @@ const protect = (req, res, next) => {
       // Böylece sonraki fonksiyonlarda req.user.id ile kim olduğunu bileceğiz
       req.user = decoded;
 
-      next(); // Yoluna devam et
+      return next(); // Yoluna devam et
     } catch (error) {
       return res
         .status(401)
