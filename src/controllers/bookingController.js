@@ -13,7 +13,7 @@ const getBookings = async (req, res) => {
     if (role === "owner") {
       bookings = await pool.query(
         `SELECT b.id, b.user_id, b.gym_id, b.booking_date, b.paid_amount, b.status, b.created_at,
-                g.gym_name, u.full_name, u.email
+                g.name as gym_name, u.full_name, u.email
          FROM bookings b
          JOIN gyms g ON b.gym_id = g.id
          JOIN users u ON b.user_id = u.id
@@ -23,7 +23,7 @@ const getBookings = async (req, res) => {
       );
     } else {
       bookings = await pool.query(
-        `SELECT b.id, b.user_id, b.gym_id, b.booking_date, b.paid_amount, b.status, b.created_at, g.gym_name
+        `SELECT b.id, b.user_id, b.gym_id, b.booking_date, b.paid_amount, b.status, b.created_at, g.name as gym_name
          FROM bookings b
          JOIN gyms g ON b.gym_id = g.id
          WHERE b.user_id = $1
@@ -44,82 +44,117 @@ const getBookings = async (req, res) => {
     });
   }
 };
-// @desc    Yeni Rezervasyon Oluştur (Cüzdan + Kota + Kayıt)
+// @desc    Yeni Rezervasyon Oluştur (Cüzdan + Kota + Kayıt) - Çoklu Tarih Desteği
 // @route   POST /api/bookings
 // @access  Private (Sadece User)
 const createBooking = async (req, res) => {
-  const { gym_id, booking_date } = req.body;
+  const { gym_id, booking_date, booking_dates } = req.body;
   const user_id = req.user.id;
 
-  const client = await pool.connect(); // Transaction için client üzerinden bağlanıyoruz
+  // Tek tarih mi yoksa çoklu tarih mi kontrol et
+  const datesToBook =
+    booking_dates && Array.isArray(booking_dates)
+      ? booking_dates
+      : booking_date
+        ? [booking_date]
+        : [];
+
+  if (datesToBook.length === 0) {
+    return res.status(400).json({ message: "Lütfen en az bir tarih seçin" });
+  }
+
+  const client = await pool.connect();
 
   try {
-    await client.query("BEGIN"); // İŞLEM BAŞLASIN
+    await client.query("BEGIN");
 
-    // 1. Günlük Konfigürasyonu Çek (Fiyat ve Kota Kontrolü)
-    const configRes = await client.query(
-      "SELECT * FROM gym_config WHERE gym_id = $1 AND target_date = $2 FOR UPDATE",
-      [gym_id, booking_date],
-    ); // FOR UPDATE ile bu satırı işlem bitene kadar kilitleriz (Race condition önlemi)
+    const createdBookings = [];
+    let totalCost = 0;
 
-    if (configRes.rows.length === 0 || !configRes.rows[0].is_open) {
-      throw new Error("Salon belirtilen tarihte kapalı veya ayarlanmamış.");
+    // Her tarih için kontrolü yap ve hazırlığı tamamla
+    const bookingDetails = [];
+
+    for (const date of datesToBook) {
+      const configRes = await client.query(
+        "SELECT * FROM gym_config WHERE gym_id = $1 AND target_date = $2 FOR UPDATE",
+        [gym_id, date],
+      );
+
+      if (configRes.rows.length === 0 || !configRes.rows[0].is_open) {
+        throw new Error(`Salon ${date} tarihinde kapalı veya ayarlanmamış.`);
+      }
+
+      const config = configRes.rows[0];
+
+      if (config.remaining_quota <= 0) {
+        throw new Error(`${date} tarihinde kontenjan dolmuş.`);
+      }
+
+      bookingDetails.push({
+        date,
+        price: parseFloat(config.price),
+        quota_id: config.id,
+      });
+
+      totalCost += parseFloat(config.price);
     }
 
-    const config = configRes.rows[0];
-
-    if (config.remaining_quota <= 0) {
-      throw new Error("Maalesef bu tarih için kontenjan dolmuş.");
-    }
-
-    // 2. Kullanıcının Bakiyesini Kontrol Et
+    // 2. Kullanıcının toplam bakiyesini kontrol et
     const userRes = await client.query(
       "SELECT wallet_balance FROM users WHERE id = $1 FOR UPDATE",
       [user_id],
     );
     const userBalance = parseFloat(userRes.rows[0].wallet_balance);
 
-    if (userBalance < parseFloat(config.price)) {
-      throw new Error("Yetersiz bakiye. Lütfen cüzdanınıza para yükleyin.");
+    if (userBalance < totalCost) {
+      throw new Error(
+        `Yetersiz bakiye. Gerekli: ₺${totalCost.toFixed(2)}, Mevcut: ₺${userBalance.toFixed(2)}`,
+      );
     }
 
-    // 3. Kullanıcı Bakiyesini Düşür
-    await client.query(
-      "UPDATE users SET wallet_balance = wallet_balance - $1 WHERE id = $2",
-      [config.price, user_id],
-    );
+    // 3. Her tarih için rezervasyon oluştur
+    for (const detail of bookingDetails) {
+      // Bakiye düş
+      await client.query(
+        "UPDATE users SET wallet_balance = wallet_balance - $1 WHERE id = $2",
+        [detail.price, user_id],
+      );
 
-    // 4. Salon Kotasını Azalt
-    await client.query(
-      "UPDATE gym_config SET remaining_quota = remaining_quota - 1 WHERE gym_id = $1 AND target_date = $2",
-      [gym_id, booking_date],
-    );
+      // Kota azalt
+      await client.query(
+        "UPDATE gym_config SET remaining_quota = remaining_quota - 1 WHERE gym_id = $1 AND target_date = $2",
+        [gym_id, detail.date],
+      );
 
-    // 5. Rezervasyonu Oluştur
-    const bookingRes = await client.query(
-      "INSERT INTO bookings (user_id, gym_id, booking_date, paid_amount, status) VALUES ($1, $2, $3, $4, $5) RETURNING *",
-      [user_id, gym_id, booking_date, config.price, "active"],
-    );
+      // Rezervasyon oluştur
+      const bookingRes = await client.query(
+        "INSERT INTO bookings (user_id, gym_id, booking_date, paid_amount, status) VALUES ($1, $2, $3, $4, $5) RETURNING *",
+        [user_id, gym_id, detail.date, detail.price, "active"],
+      );
 
-    // 6. Cüzdan Hareketlerine Log Ekle
-    await client.query(
-      "INSERT INTO wallet_transactions (user_id, booking_id, amount, type) VALUES ($1, $2, $3, $4)",
-      [user_id, bookingRes.rows[0].id, -config.price, "payment"],
-    );
+      // Cüzdan hareketi kaydet
+      await client.query(
+        "INSERT INTO wallet_transactions (user_id, booking_id, amount, type) VALUES ($1, $2, $3, $4)",
+        [user_id, bookingRes.rows[0].id, -detail.price, "payment"],
+      );
 
-    await client.query("COMMIT"); // HER ŞEY TAMAM, KAYDET!
+      createdBookings.push(bookingRes.rows[0]);
+    }
+
+    await client.query("COMMIT");
 
     res.status(201).json({
       success: true,
-      message: "Rezervasyon başarıyla oluşturuldu!",
-      data: bookingRes.rows[0],
+      message: `${createdBookings.length} rezervasyon başarıyla oluşturuldu!`,
+      data: createdBookings,
+      total_cost: totalCost,
     });
   } catch (error) {
-    await client.query("ROLLBACK"); // BİR YERDE HATA OLURSA HER ŞEYİ GERİ AL!
+    await client.query("ROLLBACK");
     console.error("Booking Error:", error.message);
     res.status(400).json({ message: error.message });
   } finally {
-    client.release(); // Bağlantıyı havuza geri bırak
+    client.release();
   }
 };
 

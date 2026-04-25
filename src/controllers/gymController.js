@@ -37,4 +37,43 @@ const getAllGyms = async (req, res) => {
   }
 };
 
-module.exports = { createGym, getAllGyms };
+// @desc    Geliştirme Amaçlı: Test Verisi Oluştur
+// @route   GET /api/gyms/seed/test-data
+// @access  Public (Sadece geliştirme)
+const seedTestData = async (req, res) => {
+  try {
+    // Test gym_config data oluştur
+    const today = new Date().toISOString().split("T")[0];
+
+    // Yarın ve sonraki 7 gün için config oluştur
+    const dates = [];
+    for (let i = 0; i < 7; i++) {
+      const date = new Date();
+      date.setDate(date.getDate() + i);
+      dates.push(date.toISOString().split("T")[0]);
+    }
+
+    // Gym 1 için config oluştur
+    for (const date of dates) {
+      await pool.query(
+        `INSERT INTO gym_config (gym_id, target_date, total_quota, remaining_quota, price, age_restriction, is_open)
+         VALUES ($1, $2, $3, $3, $4, $5, $6)
+         ON CONFLICT (gym_id, target_date) DO NOTHING`,
+        [1, date, 50, 25, 0, true],
+      );
+    }
+
+    res.json({
+      success: true,
+      message: "Test verisi başarıyla oluşturuldu",
+      dates,
+    });
+  } catch (error) {
+    console.error("Seed error:", error);
+    res
+      .status(500)
+      .json({ message: "Test verisi oluşturulamadı", error: error.message });
+  }
+};
+
+module.exports = { createGym, getAllGyms, seedTestData };
