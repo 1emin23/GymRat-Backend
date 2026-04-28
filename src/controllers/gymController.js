@@ -70,8 +70,8 @@ const createGym = async (req, res) => {
 
     // 4. Create gym in database first
     const newGym = await pool.query(
-      `INSERT INTO gyms (owner_id, name, location_lat, location_long, description, address, city, phone, email, opening_time, closing_time, membership_price, daily_price, amenities) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) 
+      `INSERT INTO gyms (owner_id, name, location_lat, location_long, description, address, city, phone, email, opening_time, closing_time, membership_price, amenities) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) 
        RETURNING *`,
       [
         owner_id,
@@ -86,7 +86,6 @@ const createGym = async (req, res) => {
         opening_time || "06:00",
         closing_time || "23:00",
         membership_price,
-        daily_price || null,
         amenities || null,
       ],
     );
@@ -94,7 +93,7 @@ const createGym = async (req, res) => {
     const gymId = newGym.rows[0].id;
 
     // 5. Create default gym_config for today and next 30 days if daily_price and daily_capacity provided
-    if (daily_price && daily_capacity) {
+    if (membership_price && daily_capacity) {
       const today = new Date();
       for (let i = 0; i < 30; i++) {
         const date = new Date(today);
@@ -106,7 +105,7 @@ const createGym = async (req, res) => {
             `INSERT INTO gym_config (gym_id, target_date, total_quota, remaining_quota, price, is_open)
              VALUES ($1, $2, $3, $3, $4, true)
              ON CONFLICT (gym_id, target_date) DO NOTHING`,
-            [gymId, dateStr, daily_capacity, daily_price],
+            [gymId, dateStr, daily_capacity, membership_price],
           );
         } catch (err) {
           console.error(`Failed to create gym_config for ${dateStr}:`, err);
