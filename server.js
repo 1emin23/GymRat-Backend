@@ -11,6 +11,10 @@ app.use(cors()); // Farklı portlardan (örn: React 3000) gelen istekleri kabul 
 app.use(express.json()); // JSON formatındaki istek gövdelerini (body) okuyabilmek için
 app.use(express.static("public"));
 
+// Serve uploaded files
+app.use("/gym_images", express.static("public/gym_images"));
+app.use("/users", express.static("public/users"));
+
 // 2. Database Connection Check
 // Uygulama başlarken db.js zaten bağlantıyı test ediyor,
 // ama burada pool üzerinden bir sorgu atarak doğruluğu kesinleştirebiliriz.
@@ -21,6 +25,8 @@ pool.query("SELECT NOW()", (err, res) => {
     console.log("✅ Veritabanı aktif, zaman damgası:", res.rows[0].now);
   }
 });
+
+app.use("/gym_images", express.static("public/gym_images"));
 
 // 3. Ana Route (Test için)
 app.get("/", (req, res) => {
@@ -34,6 +40,7 @@ app.use("/api/bookings", require("./src/routes/bookingRoutes"));
 app.use("/api/wallet", require("./src/routes/walletRoutes"));
 app.use("/api/analytics", require("./src/routes/analyticsRoutes"));
 app.use("/api/reviews", require("./src/routes/reviewRoutes"));
+app.use("/api/qr", require("./src/routes/qrRoutes"));
 
 // 4. Global Hata Yönetimi (Hata mesajlarını tek bir yerden kontrol edelim)
 app.use((err, req, res, next) => {

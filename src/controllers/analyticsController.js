@@ -17,6 +17,13 @@ const getOwnerSummary = async (req, res) => {
              WHERE g.owner_id = $1 AND b.status = 'completed'`,
       [owner_id],
     );
+    // Haftalık kazançları gün gün gruplar
+    const weeklyEarnings = await pool.query(
+      `SELECT TO_CHAR(created_at, 'Day') as day, SUM(paid_amount) as amount 
+   FROM bookings 
+   WHERE status = 'completed' AND created_at > NOW() - INTERVAL '7 days'
+   GROUP BY day`,
+    );
 
     // 2. Salon bazlı performans (Eğer birden fazla salonu varsa)
     const gymPerformanceRes = await pool.query(

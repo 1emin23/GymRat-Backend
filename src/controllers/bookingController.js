@@ -158,52 +158,6 @@ const createBooking = async (req, res) => {
   }
 };
 
-const checkInBooking = async (req, res) => {
-  const { id } = req.params;
-  const owner_id = req.user.id; // protect middleware'inden geliyor
-
-  try {
-    // 1. Bu rezervasyon gerçekten bu owner'ın salonuna mı ait?
-    const bookingCheck = await pool.query(
-      `SELECT b.* FROM bookings b
-             JOIN gyms g ON b.gym_id = g.id
-             WHERE b.id = $1 AND g.owner_id = $2`,
-      [id, owner_id],
-    );
-
-    if (bookingCheck.rows.length === 0) {
-      return res.status(403).json({
-        message:
-          "Bu onaylama işlemi için yetkiniz yok veya rezervasyon bulunamadı.",
-      });
-    }
-
-    const booking = bookingCheck.rows[0];
-
-    // 2. Rezervasyon zaten tamamlanmış mı kontrol et
-    if (booking.status !== "active") {
-      return res
-        .status(400)
-        .json({ message: `Rezervasyon zaten ${booking.status} durumunda.` });
-    }
-
-    // 3. Durumu güncelle
-    const updatedBooking = await pool.query(
-      "UPDATE bookings SET status = $1 WHERE id = $2 RETURNING *",
-      ["completed", id],
-    );
-
-    res.json({
-      success: true,
-      message: "Check-in başarılı. Keyifli antrenmanlar!",
-      data: updatedBooking.rows[0],
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Check-in sırasında bir hata oluştu." });
-  }
-};
-
 // @desc    Rezervasyonu İptal Et (Kısmen veya Tam İade)
 // @route   DELETE /api/bookings/:id
 // @access  Private (Sadece User)
@@ -340,4 +294,4 @@ const cancelBooking = async (req, res) => {
   }
 };
 
-module.exports = { getBookings, createBooking, checkInBooking, cancelBooking };
+module.exports = { getBookings, createBooking, cancelBooking };

@@ -22,6 +22,45 @@ const sendVerificationEmail = async (email, code, type = "email") => {
   }
 };
 
+// Şifre değiştirme fonksiyonu
+const changePassword = async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  const userId = req.user.id; // protect middleware'inden gelen kullanıcı id'si
+
+  try {
+    // 1. Kullanıcıyı database'den bul (Tablo adının 'users' olduğunu varsayıyorum)
+    const userResult = await pool.query("SELECT * FROM users WHERE id = $1", [
+      userId,
+    ]);
+    const user = userResult.rows[0];
+
+    if (!user) {
+      return res.status(404).json({ message: "Kullanıcı bulunamadı." });
+    }
+
+    // 2. Mevcut şifreyi kontrol et
+    const isMatch = await bcrypt.compare(currentPassword, user.password_hash);
+    if (!isMatch) {
+      return res.status(400).json({ message: "Mevcut şifreniz hatalı." });
+    }
+
+    // 3. Yeni şifreyi hashle
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+    // 4. Veritabanında güncelle
+    await pool.query("UPDATE users SET password_hash = $1 WHERE id = $2", [
+      hashedPassword,
+      userId,
+    ]);
+
+    res.status(200).json({ message: "Şifre başarıyla güncellendi." });
+  } catch (error) {
+    console.error("Change Password Error:", error);
+    res.status(500).json({ message: "Sunucu hatası oluştu." });
+  }
+};
+
 // Mock SMS sender (şimdilik console'da göster)
 const sendVerificationSMS = async (phone, code) => {
   try {
@@ -211,11 +250,9 @@ const verifyPhone = async (req, res) => {
 
     // Email doğrulanmış mı?
     if (!userData.email_verified) {
-      return res
-        .status(400)
-        .json({
-          message: "Email doğrulanmadığı için telefon doğrulayamazsınız.",
-        });
+      return res.status(400).json({
+        message: "Email doğrulanmadığı için telefon doğrulayamazsınız.",
+      });
     }
 
     // Telefon zaten doğrulanmış mı?
@@ -280,11 +317,9 @@ const sendPhoneCode = async (req, res) => {
     }
 
     if (user.rows[0].role !== "owner") {
-      return res
-        .status(403)
-        .json({
-          message: "Sadece salon sahipleri telefon doğrulaması yapabilir.",
-        });
+      return res.status(403).json({
+        message: "Sadece salon sahipleri telefon doğrulaması yapabilir.",
+      });
     }
 
     // Yeni verification kodu oluştur ve gönder
@@ -425,4 +460,5 @@ module.exports = {
   verifyPhone,
   sendPhoneCode,
   resendEmailCode,
+  changePassword,
 };
