@@ -1,9 +1,12 @@
 const express = require("express");
 const router = express.Router();
-const { generateQR, verifyQR } = require("../controllers/qrController");
-const { protect, authorize } = require("../middlewares/authMiddleware");
+const qrController = require("../controllers/qrController");
+const { protect } = require("../middlewares/authMiddleware"); // Middleware adın farklıysa düzelt
 
-router.post("/generate", protect, generateQR);
-router.post("/verify", protect, authorize("owner"), verifyQR);
+// Lovable'ın beklediği: POST /api/bookings/:id/generate-qr
+router.post("/:id/generate-qr", protect, qrController.generateQR);
+
+// Lovable'ın beklediği: POST /api/bookings/check-in
+router.post("/check-in", protect, qrController.checkIn);
 
 module.exports = router;

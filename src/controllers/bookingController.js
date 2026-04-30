@@ -294,4 +294,20 @@ const cancelBooking = async (req, res) => {
   }
 };
 
-module.exports = { getBookings, createBooking, cancelBooking };
+const getBookingById = async (req, res) => {
+  const { id } = req.params;
+  const userId = req.user.id;
+  console.log(id, userId, "bookingController ");
+  const { rows } = await pool.query(
+    `SELECT b.*, g.name AS gym_name
+     FROM bookings b
+     LEFT JOIN gyms g ON g.id = b.gym_id
+     WHERE b.id = $1 AND b.user_id = $2`,
+    [id, userId],
+  );
+  if (!rows.length)
+    return res.status(404).json({ success: false, message: "Not found" });
+  res.json({ success: true, data: rows[0] });
+};
+
+module.exports = { getBookings, createBooking, cancelBooking, getBookingById };

@@ -1,23 +1,29 @@
 const express = require("express");
 const cors = require("cors");
 require("dotenv").config();
-
-// db.js içindeki pool (bağlantı havuzu) yapısını çekiyoruz
+const passport = require("./src/config/passport");
 const pool = require("./src/config/db");
+
 const app = express();
 
 // 1. Middlewares
-app.use(cors()); // Farklı portlardan (örn: React 3000) gelen istekleri kabul etmek için
-app.use(express.json()); // JSON formatındaki istek gövdelerini (body) okuyabilmek için
+app.use(
+  cors({
+    origin: "*", // Test aşamasında her yerden gelen isteğe izin ver
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  }),
+);
+app.use(express.json());
 app.use(express.static("public"));
+app.use(passport.initialize());
 
-// Serve uploaded files
+// 2. Static Files (Görseller ve Statik İçerik)
 app.use("/gym_images", express.static("public/gym_images"));
 app.use("/users", express.static("public/users"));
+app.use("/gyms", express.static("public/gyms")); // Lovable uyumlu yol
 
-// 2. Database Connection Check
-// Uygulama başlarken db.js zaten bağlantıyı test ediyor,
-// ama burada pool üzerinden bir sorgu atarak doğruluğu kesinleştirebiliriz.
+// 3. Veritabanı Bağlantı Kontrolü
 pool.query("SELECT NOW()", (err, res) => {
   if (err) {
     console.error("❌ Veritabanı sorgu hatası:", err.stack);
@@ -26,23 +32,37 @@ pool.query("SELECT NOW()", (err, res) => {
   }
 });
 
-app.use("/gym_images", express.static("public/gym_images"));
+// 4. API Routes (Sıralama Önemlidir)
 
-// 3. Ana Route (Test için)
-app.get("/", (req, res) => {
-  console.log("first");
-  res.send("GymWallet API Yayında!");
-});
-app.use("/api/auth", require("./src/routes/authRoutes")); // Giriş-Kayıt (Public)
-app.use("/api/users", require("./src/routes/userRoutes")); // Profil-Ayarlar (Private/Korumalı)
+// Kimlik Doğrulama ve Kullanıcı İşlemleri
+app.use("/api/auth", require("./src/routes/authRoutes"));
+app.use("/api/users", require("./src/routes/userRoutes"));
+
+// Salon ve Cüzdan İşlemleri
 app.use("/api/gyms", require("./src/routes/gymRoutes.js"));
-app.use("/api/bookings", require("./src/routes/bookingRoutes"));
 app.use("/api/wallet", require("./src/routes/walletRoutes"));
+
+// Analiz ve Yorumlar
 app.use("/api/analytics", require("./src/routes/analyticsRoutes"));
 app.use("/api/reviews", require("./src/routes/reviewRoutes"));
-app.use("/api/qr", require("./src/routes/qrRoutes"));
 
-// 4. Global Hata Yönetimi (Hata mesajlarını tek bir yerden kontrol edelim)
+// Rezervasyon ve QR Sistemi (Tek bir prefix altında birleşti)
+// Önemli: bookingRoutes genel rezervasyon işlerini, qrRoutes ise QR üretimini yönetir.
+app.use("/api/bookings", require("./src/routes/qrRoutes")); // önce spesifik
+app.use("/api/bookings", require("./src/routes/bookingRoutes")); // sonra genel
+
+// 5. Ana Route (Test için)
+app.get("/", (req, res) => {
+  res.send("GymWallet API Yayında!");
+});
+// Test endpoint'i
+app.get("/api/test", (req, res) => {
+  res.json({
+    message: "Bağlantı başarılı! Telefonun şu an bilgisayarına ulaşıyor.",
+  });
+});
+
+// 6. Global Hata Yönetimi
 app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(500).json({
@@ -52,12 +72,8 @@ app.use((err, req, res, next) => {
   });
 });
 
-// @desc    Cüzdana bakiye yükle (Simülasyon)
-// @route   POST /api/wallet/deposit
-// @access  Private
-
-// 5. Port Dinleme
+// 7. Port Dinleme
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`🚀 Server http://localhost:${PORT} üzerinde çalışıyor.`);
+  console.log(`Server is running http://localhost:${PORT}`);
 });

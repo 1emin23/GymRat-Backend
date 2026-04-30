@@ -8,16 +8,25 @@ const {
   updateGym,
   deleteGym,
   getGymById,
+  uploadGymImagesToExisting,
+  getGymConfig,
 } = require("../controllers/gymController");
 const { setGymConfig } = require("../controllers/gymConfigController");
 const { protect, authorize } = require("../middlewares/authMiddleware");
-const { uploadGymImages, handleUploadError } = require("../utils/fileUpload");
+const {
+  uploadGymImages,
+  uploadGymImagesSequential,
+  handleUploadError,
+} = require("../utils/fileUpload");
 
 // Owner'ın kendi salonlarını getir - Must be before /:id routes
 router.get("/owner/gyms", protect, authorize("owner"), getOwnerGyms);
 
 // Herkes salonları görebilir
 router.get("/", getAllGyms);
+
+// Get gym config (availability & pricing)
+router.get("/:id/config", getGymConfig);
 
 router.get("/:gymId", getGymById); // Detaylı salon bilgisi için aynı route'u kullanabiliriz, controller içinde ayrım yaparız
 
@@ -33,6 +42,16 @@ router.post(
 
 // Salon config
 router.post("/:gymId/config", protect, authorize("owner"), setGymConfig);
+
+// Upload images to existing gym
+router.post(
+  "/:id/images",
+  protect,
+  authorize("owner"),
+  uploadGymImagesSequential,
+  handleUploadError,
+  uploadGymImagesToExisting,
+);
 
 // Salonu güncelle ve sil
 router.patch(
