@@ -3,6 +3,7 @@ const cors = require("cors");
 require("dotenv").config();
 const passport = require("./src/config/passport");
 const pool = require("./src/config/db");
+const path = require("path");
 
 const app = express();
 
@@ -15,11 +16,9 @@ app.use(
   }),
 );
 app.use(express.json());
-app.use(express.static("public"));
+app.use("/public", express.static(path.join(__dirname, "public")));
 app.use(passport.initialize());
 
-// 2. Static Files (Görseller ve Statik İçerik)
-app.use("/gym_images", express.static("public/gym_images"));
 app.use("/users", express.static("public/users"));
 app.use("/gyms", express.static("public/gyms")); // Lovable uyumlu yol
 
@@ -54,12 +53,6 @@ app.use("/api/bookings", require("./src/routes/bookingRoutes")); // sonra genel
 // 5. Ana Route (Test için)
 app.get("/", (req, res) => {
   res.send("GymWallet API Yayında!");
-});
-// Test endpoint'i
-app.get("/api/test", (req, res) => {
-  res.json({
-    message: "Bağlantı başarılı! Telefonun şu an bilgisayarına ulaşıyor.",
-  });
 });
 
 // 6. Global Hata Yönetimi

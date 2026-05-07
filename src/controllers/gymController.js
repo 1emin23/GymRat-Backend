@@ -150,18 +150,121 @@ const getGymConfig = async (req, res) => {
     res.status(500).json({ message: "Konfigürasyon hatası." });
   }
 };
-// Hata almamak için şimdilik boş fonksiyonlar olarak tanımlıyoruz
+
+// @desc Salonu Güncelle (Görseller dahil)
 const updateGym = async (req, res) => {
-  res.status(501).json({ message: "Bu özellik henüz güncellenmedi." });
+  const { gymId } = req.params;
+  const { name, description, address, city, membership_price, amenities } =
+    req.body;
+
+  try {
+    const updatedGym = await pool.query(
+      `UPDATE gyms SET name = $1, description = $2, address = $3, city = $4, 
+             membership_price = $5, amenities = $6 WHERE id = $7 AND owner_id = $8 RETURNING *`,
+      [
+        name,
+        description,
+        address,
+        city,
+        membership_price,
+        amenities,
+        gymId,
+        req.user.id,
+      ],
+    );
+
+    if (updatedGym.rows.length === 0) {
+      return res
+        .status(404)
+        .json({ message: "Salon bulunamadı veya yetkiniz yok." });
+    }
+
+    res.json({ success: true, gym: updatedGym.rows[0] });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Güncelleme sırasında hata oluştu." });
+  }
 };
 
+// @desc Salonu Sil (Görselleri fiziksel olarak temizler)
 const deleteGym = async (req, res) => {
-  res.status(501).json({ message: "Bu özellik henüz güncellenmedi." });
+  const { gymId } = req.params;
+
+  try {
+    // 1. Önce salon bilgilerini ve resim yollarını al
+    const gymResult = await pool.query(
+      "SELECT images FROM gyms WHERE id = $1 AND owner_id = $2",
+      [gymId, req.user.id],
+    );
+
+    if (gymResult.rows.length === 0) {
+      return res.status(404).json({ message: "Salon bulunamadı." });
+    }
+
+    const images = gymResult.rows[0].images || [];
+
+    // 2. Fiziksel dosyaları sil
+    images.forEach((imagePath) => {
+      const fullPath = path.join(__dirname, "..", imagePath); // Dosya yolunu oluştur
+      if (fs.existsSync(fullPath)) {
+        fs.unlinkSync(fullPath); // Dosyayı sil
+      }
+    });
+
+    // 3. Klasörü sil (Eğer klasör boşsa)
+    const gymDir = path.join(__dirname, "..", "public", "gyms", gymId);
+    if (fs.existsSync(gymDir)) {
+      fs.rmSync(gymDir, { recursive: true, force: true });
+    }
+
+    // 4. Veritabanından sil
+    await pool.query("DELETE FROM gyms WHERE id = $1", [gymId]);
+
+    res.json({
+      success: true,
+      message: "Salon ve ilgili tüm görseller silindi.",
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Silme işlemi başarısız." });
+  }
 };
 
+// @desc Mevcut Salona Ardışık Görsel Ekle
 const uploadGymImagesToExisting = async (req, res) => {
-  res.status(501).json({ message: "Bu özellik henüz güncellenmedi." });
+  const { id } = req.params;
+
+  try {
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ message: "Görsel yüklenmedi." });
+    }
+
+    // Mevcut resimleri al
+    const currentGym = await pool.query(
+      "SELECT images FROM gyms WHERE id = $1",
+      [id],
+    );
+    const currentImages = currentGym.rows[0].images || [];
+
+    // Yeni resim yollarını oluştur (Ardışık: mevcut + 1)
+    const newImagePaths = req.files.map((file, index) => {
+      const nextIndex = currentImages.length + index + 1;
+      return `/public/gyms/${id}/images/${nextIndex}.jpg`;
+    });
+
+    // Veritabanını güncelle
+    const result = await pool.query(
+      "UPDATE gyms SET images = array_cat(images, $1) WHERE id = $2 RETURNING images",
+      [newImagePaths, id],
+    );
+
+    res.status(200).json({ success: true, images: result.rows[0].images });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Görsel yükleme hatası." });
+  }
 };
+
 module.exports = {
   createGym,
   getAllGyms,

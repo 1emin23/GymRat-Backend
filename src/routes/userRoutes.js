@@ -15,6 +15,9 @@ router.get("/profile", protect, async (req, res) => {
     );
 
     console.log("Profile fetch successful for user:", req.user.id);
+    console.log(
+      `profile info: ${JSON.stringify(user.rows[0])}, req info: ${JSON.stringify(req.user)}`,
+    );
 
     if (user.rows.length === 0) {
       return res.status(404).json({ message: "Kullanıcı bulunamadı." });
