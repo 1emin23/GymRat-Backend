@@ -246,19 +246,44 @@ const uploadGymImagesToExisting = async (req, res) => {
     );
     const currentImages = currentGym.rows[0].images || [];
 
-    // Yeni resim yollarını oluştur (Ardışık: mevcut + 1)
-    const newImagePaths = req.files.map((file, index) => {
-      const nextIndex = currentImages.length + index + 1;
-      return `/public/gyms/${id}/images/${nextIndex}.jpg`;
-    });
-
-    // Veritabanını güncelle
-    const result = await pool.query(
-      "UPDATE gyms SET images = array_cat(images, $1) WHERE id = $2 RETURNING images",
-      [newImagePaths, id],
+    // Yeni resim yollarını gerçek dosya adlarıyla oluştur.
+    const newImagePaths = req.files.map(
+      (file) => `/public/gyms/${id}/images/${file.filename}`,
     );
 
-    res.status(200).json({ success: true, images: result.rows[0].images });
+    // Veritabanını güncelle
+    try {
+      const result = await pool.query(
+        `UPDATE gyms
+         SET images = array_cat(COALESCE(images, '{}'), $1),
+             cover_image_url = COALESCE(cover_image_url, $2)
+         WHERE id = $3
+         RETURNING images, cover_image_url`,
+        [newImagePaths, newImagePaths[0] || null, id],
+      );
+
+      return res.status(200).json({
+        success: true,
+        images: result.rows[0].images,
+        cover_image_url: result.rows[0].cover_image_url,
+      });
+    } catch (dbErr) {
+      // Backward compatibility: cover_image_url column may not exist yet.
+      if (
+        dbErr &&
+        typeof dbErr === "object" &&
+        String(dbErr.message || "").includes("cover_image_url")
+      ) {
+        const fallback = await pool.query(
+          "UPDATE gyms SET images = array_cat(COALESCE(images, '{}'), $1) WHERE id = $2 RETURNING images",
+          [newImagePaths, id],
+        );
+        return res
+          .status(200)
+          .json({ success: true, images: fallback.rows[0].images });
+      }
+      throw dbErr;
+    }
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: "Görsel yükleme hatası." });
