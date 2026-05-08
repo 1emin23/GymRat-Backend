@@ -11,6 +11,7 @@ const createGym = async (req, res) => {
     description,
     address,
     city,
+    district,
     phone,
     email,
     opening_time,
@@ -22,7 +23,7 @@ const createGym = async (req, res) => {
   const owner_id = req.user.id;
 
   try {
-    // 1. Yetki Kontrolü (Email/Phone verification engeli kaldırıldı)
+    // 1. Yetki Kontrolü
     const ownerCheck = await pool.query(
       "SELECT id, role FROM users WHERE id = $1",
       [owner_id],
@@ -35,11 +36,9 @@ const createGym = async (req, res) => {
     }
 
     if (!name || !address || !city || !phone || !membership_price) {
-      return res
-        .status(400)
-        .json({
-          message: "Salon adı, adres, şehir, telefon ve fiyat zorunludur.",
-        });
+      return res.status(400).json({
+        message: "Salon adı, adres, şehir, telefon ve fiyat zorunludur.",
+      });
     }
 
     const lat = location_lat || 41.0082;
@@ -47,8 +46,8 @@ const createGym = async (req, res) => {
 
     // 2. DB'ye ekle
     const newGym = await pool.query(
-      `INSERT INTO gyms (owner_id, name, location_lat, location_long, description, address, city, phone, email, opening_time, closing_time, membership_price, amenities, cover_image, is_published) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) 
+      `INSERT INTO gyms (owner_id, name, location_lat, location_long, description, address, city, district, phone, email, opening_time, closing_time, membership_price, amenities, cover_image, is_published) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) 
        RETURNING *`,
       [
         owner_id,
@@ -58,6 +57,7 @@ const createGym = async (req, res) => {
         description || null,
         address,
         city,
+        district || null,
         phone,
         email || null,
         opening_time || "06:00",
@@ -189,6 +189,7 @@ const updateGym = async (req, res) => {
     description,
     address,
     city,
+    district,
     phone,
     membership_price,
     amenities,
@@ -200,14 +201,15 @@ const updateGym = async (req, res) => {
   try {
     const updatedGym = await pool.query(
       `UPDATE gyms SET name = COALESCE($1, name), description = COALESCE($2, description), address = COALESCE($3, address), city = COALESCE($4, city), 
-             phone = COALESCE($5, phone), membership_price = COALESCE($6, membership_price), amenities = COALESCE($7, amenities),
-             location_lat = COALESCE($8, location_lat), location_long = COALESCE($9, location_long), cover_image = COALESCE($10, cover_image)
-             WHERE id = $11 AND owner_id = $12 RETURNING *`,
+             district = COALESCE($5, district), phone = COALESCE($6, phone), membership_price = COALESCE($7, membership_price), amenities = COALESCE($8, amenities),
+             location_lat = COALESCE($9, location_lat), location_long = COALESCE($10, location_long), cover_image = COALESCE($11, cover_image)
+             WHERE id = $12 AND owner_id = $13 RETURNING *`,
       [
         name || null,
         description || null,
         address || null,
         city || null,
+        district || null,
         phone || null,
         membership_price || null,
         amenities || null,
@@ -232,30 +234,41 @@ const updateGym = async (req, res) => {
   }
 };
 
-// @desc Salonun Yayınlanma Durumunu Güncelle (gym_config setup tamamlandığında çağrılacak)
-const publishGym = async (req, res) => {
+// @desc Salonun Yayınlanma Durumunu Aç/Kapat (Manual Toggle)
+const togglePublishGym = async (req, res) => {
   const { gymId } = req.params;
 
   try {
-    const updatedGym = await pool.query(
-      `UPDATE gyms SET is_published = true WHERE id = $1 AND owner_id = $2 RETURNING *`,
+    // Mevcut is_published durumunu getir
+    const gymResult = await pool.query(
+      `SELECT is_published FROM gyms WHERE id = $1 AND owner_id = $2`,
       [gymId, req.user.id],
     );
 
-    if (updatedGym.rows.length === 0) {
+    if (gymResult.rows.length === 0) {
       return res
         .status(404)
         .json({ message: "Salon bulunamadı veya yetkiniz yok." });
     }
 
+    const currentStatus = gymResult.rows[0].is_published;
+
+    // Toggle et
+    const updatedGym = await pool.query(
+      `UPDATE gyms SET is_published = $1 WHERE id = $2 AND owner_id = $3 RETURNING *`,
+      [!currentStatus, gymId, req.user.id],
+    );
+
     res.json({
       success: true,
-      message: "Salon yayınlandı.",
+      message: !currentStatus
+        ? "Salon yayınlandı."
+        : "Salon taslak olarak kaydedildi.",
       gym: updatedGym.rows[0],
     });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "Yayınlama sırasında hata oluştu." });
+    res.status(500).json({ message: "İşlem sırasında hata oluştu." });
   }
 };
 
@@ -371,7 +384,7 @@ module.exports = {
   getGymById,
   getGymConfig,
   updateGym,
-  publishGym,
+  togglePublishGym,
   deleteGym,
   uploadGymImagesToExisting,
 };

@@ -11,7 +11,7 @@ const {
   getGymById,
   uploadGymImagesToExisting,
   getGymConfig,
-  publishGym,
+  togglePublishGym,
 } = require("../controllers/gymController");
 const { setGymConfig } = require("../controllers/gymConfigController");
 const { protect, authorize } = require("../middlewares/authMiddleware");
@@ -49,7 +49,12 @@ router.post(
 router.post("/:gymId/config", protect, authorize("owner"), setGymConfig);
 
 // Salonun Yayınlanma Durumunu Güncelle
-router.post("/:gymId/publish", protect, authorize("owner"), publishGym);
+router.post(
+  "/:gymId/toggle-publish",
+  protect,
+  authorize("owner"),
+  togglePublishGym,
+);
 
 // Upload images to existing gym
 router.post(
