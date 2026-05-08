@@ -3,6 +3,7 @@ const router = express.Router();
 const {
   createGym,
   getAllGyms,
+  searchGyms,
   seedTestData,
   getOwnerGyms,
   updateGym,
@@ -10,6 +11,7 @@ const {
   getGymById,
   uploadGymImagesToExisting,
   getGymConfig,
+  publishGym,
 } = require("../controllers/gymController");
 const { setGymConfig } = require("../controllers/gymConfigController");
 const { protect, authorize } = require("../middlewares/authMiddleware");
@@ -21,6 +23,9 @@ const {
 
 // Owner'ın kendi salonlarını getir - Must be before /:id routes
 router.get("/owner/gyms", protect, authorize("owner"), getOwnerGyms);
+
+// Salon Ara (Isim ve Şehre Göre)
+router.get("/search", searchGyms);
 
 // Herkes salonları görebilir
 router.get("/", getAllGyms);
@@ -42,6 +47,9 @@ router.post(
 
 // Salon config
 router.post("/:gymId/config", protect, authorize("owner"), setGymConfig);
+
+// Salonun Yayınlanma Durumunu Güncelle
+router.post("/:gymId/publish", protect, authorize("owner"), publishGym);
 
 // Upload images to existing gym
 router.post(

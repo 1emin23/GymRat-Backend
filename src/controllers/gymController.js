@@ -34,10 +34,12 @@ const createGym = async (req, res) => {
         .json({ message: "Sadece salon sahipleri salon ekleyebilir." });
     }
 
-    if (!name || !address || !city || !membership_price) {
+    if (!name || !address || !city || !phone || !membership_price) {
       return res
         .status(400)
-        .json({ message: "Salon adı, adres, şehir ve fiyat zorunludur." });
+        .json({
+          message: "Salon adı, adres, şehir, telefon ve fiyat zorunludur.",
+        });
     }
 
     const lat = location_lat || 41.0082;
@@ -45,8 +47,8 @@ const createGym = async (req, res) => {
 
     // 2. DB'ye ekle
     const newGym = await pool.query(
-      `INSERT INTO gyms (owner_id, name, location_lat, location_long, description, address, city, phone, email, opening_time, closing_time, membership_price, amenities) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) 
+      `INSERT INTO gyms (owner_id, name, location_lat, location_long, description, address, city, phone, email, opening_time, closing_time, membership_price, amenities, cover_image, is_published) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) 
        RETURNING *`,
       [
         owner_id,
@@ -56,12 +58,14 @@ const createGym = async (req, res) => {
         description || null,
         address,
         city,
-        phone || null,
+        phone,
         email || null,
         opening_time || "06:00",
         closing_time || "23:00",
         membership_price,
         amenities || null,
+        null,
+        false,
       ],
     );
 
@@ -97,11 +101,37 @@ const createGym = async (req, res) => {
 const getAllGyms = async (req, res) => {
   try {
     const gyms = await pool.query(
-      "SELECT g.*, COALESCE(AVG(r.rating), 0) as avg_rating, COUNT(r.id) as review_count FROM gyms g LEFT JOIN reviews r ON g.id = r.gym_id GROUP BY g.id;",
+      "SELECT g.*, COALESCE(AVG(r.rating), 0) as avg_rating, COUNT(r.id) as review_count FROM gyms g LEFT JOIN reviews r ON g.id = r.gym_id WHERE g.is_published = true GROUP BY g.id ORDER BY g.created_at DESC;",
     );
     res.json({ success: true, count: gyms.rows.length, data: gyms.rows });
   } catch (error) {
     res.status(500).json({ message: "Salonlar getirilemedi." });
+  }
+};
+
+// @desc Salonları Ara (Isim ve Şehre Göre)
+const searchGyms = async (req, res) => {
+  const { q } = req.query;
+  try {
+    if (!q || typeof q !== "string" || q.trim().length === 0) {
+      return res.json({ success: true, data: [] });
+    }
+
+    const searchTerm = `%${q.trim()}%`;
+    const gyms = await pool.query(
+      `SELECT g.*, COALESCE(AVG(r.rating), 0) as avg_rating, COUNT(r.id) as review_count 
+       FROM gyms g 
+       LEFT JOIN reviews r ON g.id = r.gym_id 
+       WHERE g.is_published = true AND (LOWER(g.name) LIKE LOWER($1) OR LOWER(g.city) LIKE LOWER($1))
+       GROUP BY g.id 
+       ORDER BY g.name ASC 
+       LIMIT 50`,
+      [searchTerm],
+    );
+    res.json({ success: true, data: gyms.rows });
+  } catch (error) {
+    console.error("Search Error:", error);
+    res.status(500).json({ message: "Arama yapılamadı." });
   }
 };
 
@@ -151,23 +181,39 @@ const getGymConfig = async (req, res) => {
   }
 };
 
-// @desc Salonu Güncelle (Görseller dahil)
+// @desc Salonu Güncelle
 const updateGym = async (req, res) => {
   const { gymId } = req.params;
-  const { name, description, address, city, membership_price, amenities } =
-    req.body;
+  const {
+    name,
+    description,
+    address,
+    city,
+    phone,
+    membership_price,
+    amenities,
+    location_lat,
+    location_long,
+    cover_image,
+  } = req.body;
 
   try {
     const updatedGym = await pool.query(
-      `UPDATE gyms SET name = $1, description = $2, address = $3, city = $4, 
-             membership_price = $5, amenities = $6 WHERE id = $7 AND owner_id = $8 RETURNING *`,
+      `UPDATE gyms SET name = COALESCE($1, name), description = COALESCE($2, description), address = COALESCE($3, address), city = COALESCE($4, city), 
+             phone = COALESCE($5, phone), membership_price = COALESCE($6, membership_price), amenities = COALESCE($7, amenities),
+             location_lat = COALESCE($8, location_lat), location_long = COALESCE($9, location_long), cover_image = COALESCE($10, cover_image)
+             WHERE id = $11 AND owner_id = $12 RETURNING *`,
       [
-        name,
-        description,
-        address,
-        city,
-        membership_price,
-        amenities,
+        name || null,
+        description || null,
+        address || null,
+        city || null,
+        phone || null,
+        membership_price || null,
+        amenities || null,
+        location_lat || null,
+        location_long || null,
+        cover_image || null,
         gymId,
         req.user.id,
       ],
@@ -183,6 +229,33 @@ const updateGym = async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: "Güncelleme sırasında hata oluştu." });
+  }
+};
+
+// @desc Salonun Yayınlanma Durumunu Güncelle (gym_config setup tamamlandığında çağrılacak)
+const publishGym = async (req, res) => {
+  const { gymId } = req.params;
+
+  try {
+    const updatedGym = await pool.query(
+      `UPDATE gyms SET is_published = true WHERE id = $1 AND owner_id = $2 RETURNING *`,
+      [gymId, req.user.id],
+    );
+
+    if (updatedGym.rows.length === 0) {
+      return res
+        .status(404)
+        .json({ message: "Salon bulunamadı veya yetkiniz yok." });
+    }
+
+    res.json({
+      success: true,
+      message: "Salon yayınlandı.",
+      gym: updatedGym.rows[0],
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Yayınlama sırasında hata oluştu." });
   }
 };
 
@@ -293,11 +366,12 @@ const uploadGymImagesToExisting = async (req, res) => {
 module.exports = {
   createGym,
   getAllGyms,
+  searchGyms,
   getOwnerGyms,
   getGymById,
   getGymConfig,
-  updateGym, // Eksik olabilir, ekle
-  deleteGym, // Eksik olabilir, ekle
-  uploadGymImagesToExisting, // Eksik olabilir, ekle
-  // Diğer update/delete fonksiyonlarını da benzer sade mantıkla koruyabilirsin
+  updateGym,
+  publishGym,
+  deleteGym,
+  uploadGymImagesToExisting,
 };
