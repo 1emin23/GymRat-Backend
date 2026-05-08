@@ -1,4 +1,5 @@
 const pool = require("../config/db");
+const { hoursUntil, isSameDay, today } = require("../utils/dateHelper");
 
 // @desc    Rezervasyonları Getir (User: kendi rezevasyonları, Owner: salon rezevasyonları)
 // @route   GET /api/bookings
@@ -194,10 +195,8 @@ const cancelBooking = async (req, res) => {
       );
     }
 
-    // 4. Kalan saati hesapla
-    const bookingDateTime = new Date(booking.booking_date);
-    const now = new Date();
-    const hoursRemaining = (bookingDateTime - now) / (1000 * 60 * 60);
+    // 4. Kalan saati hesapla (Türkiye saatine göre)
+    const hoursRemaining = hoursUntil(booking.booking_date);
 
     let userRefund = 0;
     let ownerRefund = 0;

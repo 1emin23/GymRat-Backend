@@ -1,6 +1,7 @@
 const pool = require("../config/db");
 const fs = require("fs");
 const path = require("path");
+const { addDays, today } = require("../utils/dateHelper");
 
 // @desc    Yeni Spor Salonu Oluştur
 const createGym = async (req, res) => {
@@ -71,13 +72,10 @@ const createGym = async (req, res) => {
 
     const gymId = newGym.rows[0].id;
 
-    // 3. Otomatik 30 Günlük gym_config oluşturma
+    // 3. Otomatik 30 Günlük gym_config oluşturma (Türkiye saatine göre)
     if (daily_capacity) {
-      const today = new Date();
       for (let i = 0; i < 30; i++) {
-        const date = new Date(today);
-        date.setDate(date.getDate() + i);
-        const dateStr = date.toISOString().split("T")[0];
+        const dateStr = addDays(i);
         await pool.query(
           `INSERT INTO gym_config (gym_id, target_date, total_quota, remaining_quota, price, is_open)
            VALUES ($1, $2, $3, $3, $4, true)

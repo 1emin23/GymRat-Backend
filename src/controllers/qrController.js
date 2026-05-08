@@ -1,4 +1,5 @@
 const pool = require("../config/db");
+const { isSameDay, today } = require("../utils/dateHelper");
 
 exports.checkIn = async (req, res) => {
   console.log("checkIn");
@@ -33,10 +34,9 @@ exports.checkIn = async (req, res) => {
     }
 
     const booking = bookingResult.rows[0];
-    const bookingDate = new Date(booking.booking_date).toLocaleDateString().slice(0, 10);
-    const today = new Date().toLocaleDateString().slice(0, 10);
-    console.log("bookingDate", bookingDate, today);
-    if (bookingDate !== today) {
+    const todayDate = today();
+    console.log("bookingDate", booking.booking_date, "today", todayDate);
+    if (!isSameDay(booking.booking_date, todayDate)) {
       return res.status(400).json({
         success: false,
         message: "Bu rezervasyon bugüne ait değil!",
@@ -58,10 +58,9 @@ exports.checkIn = async (req, res) => {
     await pool.query("BEGIN");
     transactionStarted = true;
 
-    await pool.query(
-      "UPDATE bookings SET status = 'completed' WHERE id = $1",
-      [bookingId],
-    );
+    await pool.query("UPDATE bookings SET status = 'completed' WHERE id = $1", [
+      bookingId,
+    ]);
     await pool.query(
       "UPDATE qr_codes SET is_used = true, used_at = CURRENT_TIMESTAMP WHERE booking_id = $1",
       [bookingId],
