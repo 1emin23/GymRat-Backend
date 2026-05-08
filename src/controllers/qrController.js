@@ -1,39 +1,114 @@
 const pool = require("../config/db");
 const crypto = require("crypto");
 
+const QR_TTL_MS = 30 * 1000;
+const QR_SECRET = process.env.QR_SECRET_KEY || "gymwallet_fallback_secret";
+
+function computeSignature(bookingId, timestamp) {
+  return crypto
+    .createHmac("sha256", QR_SECRET)
+    .update(`${bookingId}:${timestamp}`)
+    .digest("hex");
+}
+
 exports.checkIn = async (req, res) => {
-  const { token } = req.body;
+  const { token } = req.body || {};
   const owner_id = req.user.id;
+  let transactionStarted = false;
 
   try {
-    const [bookingId, timestamp, signature] = token.split(":");
-    const secret = process.env.QR_SECRET_KEY;
+    if (!token || typeof token !== "string") {
+      return res.status(400).json({
+        success: false,
+        reason: "invalid",
+        message: "Geçersiz QR formatı.",
+      });
+    }
 
-    // 1. İmza ve Zaman Kontrolü
-    const expectedSignature = crypto
-      .createHmac("sha256", secret)
-      .update(`${bookingId}:${timestamp}`)
-      .digest("hex");
+    const parts = token.split(":");
+    if (parts.length !== 3) {
+      return res.status(400).json({
+        success: false,
+        reason: "invalid",
+        message: "QR formatı hatalı.",
+      });
+    }
+
+    const [bookingIdRaw, timestampRaw, signature] = parts;
+    const bookingId = Number(bookingIdRaw);
+    const timestamp = Number(timestampRaw);
+
+    if (!Number.isInteger(bookingId) || !Number.isFinite(timestamp) || !signature) {
+      return res.status(400).json({
+        success: false,
+        reason: "invalid",
+        message: "QR içeriği doğrulanamadı.",
+      });
+    }
+
+    // 1) İmza doğrulama
+    const expectedSignature = computeSignature(bookingId, timestamp);
 
     if (signature !== expectedSignature) {
-      return res.status(401).json({ error: "Geçersiz QR Kod (İmza Hatası)!" });
+      return res.status(400).json({
+        success: false,
+        reason: "invalid",
+        message: "Geçersiz QR kodu.",
+      });
     }
 
-    if (Date.now() - parseInt(timestamp) > 30000) {
-      return res.status(401).json({ error: "QR Kodun süresi dolmuş!" });
+    // 2) Süre doğrulama
+    if (Date.now() - timestamp > QR_TTL_MS) {
+      return res.status(400).json({
+        success: false,
+        reason: "expired",
+        message: "QR kodun süresi dolmuş.",
+      });
     }
 
-    // 2. Token DB'de var mı ve kullanılmamış mı?
+    // 3) Token DB'de var mı, doğru booking'e mi ait, kullanılmamış mı?
     const qrResult = await pool.query(
-      "SELECT * FROM qr_codes WHERE qr_token = $1 AND is_used = false",
-      [token],
+      `SELECT booking_id, qr_token, expires_at, is_used
+       FROM qr_codes
+       WHERE booking_id = $1`,
+      [bookingId],
     );
 
     if (qrResult.rows.length === 0) {
-      return res.status(401).json({ error: "Bu kod zaten kullanılmış!" });
+      return res.status(400).json({
+        success: false,
+        reason: "invalid",
+        message: "QR kaydı bulunamadı.",
+      });
     }
 
-    // 3. Salon Sahibi Kontrolü ve Kullanıcı Adı Çekme
+    const qrRow = qrResult.rows[0];
+
+    if (qrRow.qr_token !== token) {
+      return res.status(400).json({
+        success: false,
+        reason: "invalid",
+        message: "QR kodu güncel değil.",
+      });
+    }
+
+    if (qrRow.is_used) {
+      return res.status(200).json({
+        success: false,
+        reason: "already_used",
+        message: "Bu QR daha önce kullanıldı.",
+      });
+    }
+
+    if (qrRow.expires_at && new Date(qrRow.expires_at).getTime() < Date.now()) {
+      return res.status(400).json({
+        success: false,
+        reason: "expired",
+        message: "QR kodun süresi dolmuş.",
+      });
+    }
+
+    // 4) Salon sahibi kontrolü ve kullanıcı adı çekme
     const gymCheck = await pool.query(
       `SELECT g.owner_id, u.full_name 
              FROM bookings b 
@@ -43,22 +118,33 @@ exports.checkIn = async (req, res) => {
       [bookingId],
     );
 
+    if (!gymCheck.rows[0]) {
+      return res.status(400).json({
+        success: false,
+        reason: "invalid",
+        message: "Rezervasyon bulunamadı.",
+      });
+    }
+
     if (gymCheck.rows[0].owner_id !== owner_id) {
       return res
         .status(403)
         .json({ error: "Bu salonun yetkilisi değilsiniz!" });
     }
 
-    // 4. Onaylama (Transaction)
+    // 5) Onaylama (Transaction)
     await pool.query("BEGIN");
+    transactionStarted = true;
     await pool.query(
-      "UPDATE qr_codes SET is_used = true, used_at = NOW() WHERE qr_token = $1",
-      [token],
+      "UPDATE qr_codes SET is_used = true, used_at = NOW() WHERE booking_id = $1",
+      [bookingId],
     );
-    await pool.query("UPDATE bookings SET status = 'completed' WHERE id = $1", [
-      bookingId,
-    ]);
+    await pool.query(
+      "UPDATE bookings SET status = 'completed', is_used = true WHERE id = $1",
+      [bookingId],
+    );
     await pool.query("COMMIT");
+    transactionStarted = false;
 
     res.json({
       success: true,
@@ -66,7 +152,9 @@ exports.checkIn = async (req, res) => {
       user_name: gymCheck.rows[0].full_name,
     });
   } catch (err) {
-    await pool.query("ROLLBACK");
+    if (transactionStarted) {
+      await pool.query("ROLLBACK");
+    }
     console.error(err);
     res.status(500).json({ error: "Check-in işlemi başarısız." });
   }
@@ -116,16 +204,13 @@ exports.generateQR = async (req, res) => {
         .json({ error: "Bu rezervasyon için giriş zaten yapıldı." });
     }
 
-    // Yeni token üret
+    // Yeni token üret (id:timestamp:signature)
     const timestamp = Date.now();
-    const expiresAt = new Date(timestamp + 30 * 1000); // 30s
-    const signature = crypto
-      .createHmac("sha256", process.env.QR_SECRET || "qr_secret")
-      .update(`${id}:${timestamp}`) // ← checkIn ile AYNI format (kolon!)
-      .digest("hex");
+    const expiresAt = new Date(timestamp + QR_TTL_MS);
+    const signature = computeSignature(id, timestamp);
     const qrToken = `${id}:${timestamp}:${signature}`;
 
-    // ✅ UPSERT — eski kullanılmamış kaydı yenile, yoksa ekle
+    // UPSERT — booking_id üzerinde tek kayıt tut, tokeni 30 sn ömürle güncelle
     await pool.query(
       `INSERT INTO qr_codes (booking_id, qr_token, expires_at, is_used, used_at)
        VALUES ($1, $2, $3, false, NULL)
@@ -133,8 +218,7 @@ exports.generateQR = async (req, res) => {
        DO UPDATE SET qr_token = EXCLUDED.qr_token, 
                      expires_at = EXCLUDED.expires_at,
                      is_used = false,
-                     used_at = NULL
-       WHERE qr_codes.is_used = false`,
+                     used_at = NULL`,
       [id, qrToken, expiresAt],
     );
 
