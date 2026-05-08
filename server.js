@@ -10,7 +10,7 @@ const app = express();
 // 1. Middlewares
 app.use(
   cors({
-    origin: "https://project-blueprint-builder-nine.vercel.app", // Test aşamasında her yerden gelen isteğe izin ver
+    origin: "https://project-blueprint-builder-nine.vercel.app", 
     methods: ["GET", "POST", "PUT", "DELETE"],
     allowedHeaders: ["Content-Type", "Authorization"],
   }),
