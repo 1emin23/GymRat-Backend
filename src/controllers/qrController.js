@@ -1,6 +1,7 @@
 const pool = require("../config/db");
 
 exports.checkIn = async (req, res) => {
+  console.log("checkIn");
   const { booking_id } = req.body || {};
   const ownerId = req.user.id;
   let transactionStarted = false;
@@ -32,8 +33,9 @@ exports.checkIn = async (req, res) => {
     }
 
     const booking = bookingResult.rows[0];
-    const bookingDate = new Date(booking.booking_date).toISOString().slice(0, 10);
-    const today = new Date().toISOString().slice(0, 10);
+    const bookingDate = new Date(booking.booking_date).toLocaleDateString().slice(0, 10);
+    const today = new Date().toLocaleDateString().slice(0, 10);
+    console.log("bookingDate", bookingDate, today);
     if (bookingDate !== today) {
       return res.status(400).json({
         success: false,
@@ -57,7 +59,7 @@ exports.checkIn = async (req, res) => {
     transactionStarted = true;
 
     await pool.query(
-      "UPDATE bookings SET status = 'completed', is_used = true WHERE id = $1",
+      "UPDATE bookings SET status = 'completed' WHERE id = $1",
       [bookingId],
     );
     await pool.query(
