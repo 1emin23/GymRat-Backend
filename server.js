@@ -10,7 +10,7 @@ const app = express();
 // 1. Middlewares
 app.use(
   cors({
-    origin: "https://project-blueprint-builder-nine.vercel.app", 
+    origin: "https://project-blueprint-builder-nine.vercel.app",
     methods: ["GET", "POST", "PUT", "DELETE"],
     allowedHeaders: ["Content-Type", "Authorization"],
   }),
@@ -44,6 +44,9 @@ app.use("/api/wallet", require("./src/routes/walletRoutes"));
 // Analiz ve Yorumlar
 app.use("/api/analytics", require("./src/routes/analyticsRoutes"));
 app.use("/api/reviews", require("./src/routes/reviewRoutes"));
+
+// Slot-Based Reservation System
+app.use("/api/slots", require("./src/routes/slotRoutes"));
 
 // Rezervasyon ve QR Sistemi (Tek bir prefix altında birleşti)
 // Önemli: bookingRoutes genel rezervasyon işlerini, qrRoutes ise QR üretimini yönetir.

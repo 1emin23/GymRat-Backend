@@ -374,6 +374,62 @@ const uploadGymImagesToExisting = async (req, res) => {
   }
 };
 
+// @desc Salondan belirli bir görseli sil
+const deleteGymImage = async (req, res) => {
+  const { gymId, imagePath } = req.params;
+
+  try {
+    // 1. Yetki Kontrolü: Bu salon gerçekten bu kullanıcıya mı ait?
+    const gymCheck = await pool.query(
+      "SELECT images FROM gyms WHERE id = $1 AND owner_id = $2",
+      [gymId, req.user.id],
+    );
+
+    if (gymCheck.rows.length === 0) {
+      return res
+        .status(403)
+        .json({ message: "Bu salon üzerinde işlem yapma yetkiniz yok." });
+    }
+
+    // 2. Görsel yolunu decode et (URL encoded olabilir)
+    const decodedImagePath = decodeURIComponent(imagePath);
+
+    // 3. Mevcut görselleri al
+    const currentImages = gymCheck.rows[0].images || [];
+
+    // 4. Silinecek görseli bul ve fiziksel olarak sil
+    const imageToDelete = currentImages.find(
+      (img) => img === decodedImagePath || img.endsWith(decodedImagePath),
+    );
+
+    if (imageToDelete) {
+      const fullPath = path.join(__dirname, "..", imageToDelete);
+      if (fs.existsSync(fullPath)) {
+        fs.unlinkSync(fullPath);
+      }
+    }
+
+    // 5. Veritabanından görseli kaldır
+    const updatedImages = currentImages.filter(
+      (img) => img !== decodedImagePath && !img.endsWith(decodedImagePath),
+    );
+
+    await pool.query("UPDATE gyms SET images = $1 WHERE id = $2", [
+      updatedImages,
+      gymId,
+    ]);
+
+    res.json({
+      success: true,
+      message: "Görsel başarıyla silindi.",
+      images: updatedImages,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Görsel silme işlemi başarısız." });
+  }
+};
+
 module.exports = {
   createGym,
   getAllGyms,
@@ -385,4 +441,5 @@ module.exports = {
   togglePublishGym,
   deleteGym,
   uploadGymImagesToExisting,
+  deleteGymImage,
 };

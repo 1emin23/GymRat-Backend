@@ -12,6 +12,7 @@ const {
   uploadGymImagesToExisting,
   getGymConfig,
   togglePublishGym,
+  deleteGymImage,
 } = require("../controllers/gymController");
 const { setGymConfig } = require("../controllers/gymConfigController");
 const { protect, authorize } = require("../middlewares/authMiddleware");
@@ -64,6 +65,14 @@ router.post(
   uploadGymImagesSequential,
   handleUploadError,
   uploadGymImagesToExisting,
+);
+
+// Delete a specific image from gym
+router.delete(
+  "/:gymId/images/:imagePath",
+  protect,
+  authorize("owner"),
+  deleteGymImage,
 );
 
 // Salonu güncelle ve sil

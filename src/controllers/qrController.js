@@ -1,5 +1,5 @@
 const pool = require("../config/db");
-const { isSameDay, today } = require("../utils/dateHelper");
+const { isSameDay, today, toISODate } = require("../utils/dateHelper");
 
 exports.checkIn = async (req, res) => {
   console.log("checkIn");
@@ -86,16 +86,17 @@ exports.checkIn = async (req, res) => {
 exports.generateQR = async (req, res) => {
   try {
     const userId = req.user.id;
+    const todayDate = today(); // Türkiye saatine göre bugünün tarihi
 
     const activeBooking = await pool.query(
-      `SELECT id
+      `SELECT id, booking_date
        FROM bookings
        WHERE user_id = $1
-         AND booking_date = CURRENT_DATE
+         AND booking_date = $2
          AND status = 'active'
        ORDER BY id DESC
        LIMIT 1`,
-      [userId],
+      [userId, todayDate],
     );
 
     if (activeBooking.rows.length === 0) {
