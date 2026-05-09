@@ -51,23 +51,22 @@ const getBookings = async (req, res) => {
     });
   }
 };
-// @desc    Yeni Rezervasyon Oluştur (Cüzdan + Kota + Kayıt) - Çoklu Tarih Desteği
-// @route   POST /api/bookings
-// @access  Private (Sadece User)
-const createBooking = async (req, res) => {
-  const { gym_id, booking_date, booking_dates } = req.body;
+/**
+ * @desc    Create a new slot-based reservation
+ * @route   POST /api/bookings
+ * @access  Private (User only)
+ * @body    { gym_id, slot_id, booking_date (YYYY-MM-DD) }
+ */
+const createSlotBooking = async (req, res) => {
+  const { gym_id, slot_id, booking_date } = req.body;
   const user_id = req.user.id;
 
-  // Tek tarih mi yoksa çoklu tarih mi kontrol et
-  const datesToBook =
-    booking_dates && Array.isArray(booking_dates)
-      ? booking_dates
-      : booking_date
-        ? [booking_date]
-        : [];
-
-  if (datesToBook.length === 0) {
-    return res.status(400).json({ message: "Lütfen en az bir tarih seçin" });
+  // Validate inputs
+  if (!gym_id || !slot_id || !booking_date) {
+    return res.status(400).json({
+      success: false,
+      message: "gym_id, slot_id, and booking_date are required.",
+    });
   }
 
   const client = await pool.connect();
@@ -75,201 +74,259 @@ const createBooking = async (req, res) => {
   try {
     await client.query("BEGIN");
 
-    const createdBookings = [];
-    let totalCost = 0;
+    // 1. Fetch slot details
+    const slotResult = await client.query(
+      `SELECT id, gym_id, slot_number, slot_name, start_time, end_time, 
+              max_capacity, is_active
+       FROM slots
+       WHERE id = $1 FOR UPDATE`,
+      [slot_id],
+    );
 
-    // Her tarih için kontrolü yap ve hazırlığı tamamla
-    const bookingDetails = [];
-
-    for (const date of datesToBook) {
-      const configRes = await client.query(
-        "SELECT * FROM gym_config WHERE gym_id = $1 AND target_date = $2 FOR UPDATE",
-        [gym_id, date],
-      );
-
-      if (configRes.rows.length === 0 || !configRes.rows[0].is_open) {
-        throw new Error(`Salon ${date} tarihinde kapalı veya ayarlanmamış.`);
-      }
-
-      const config = configRes.rows[0];
-
-      if (config.remaining_quota <= 0) {
-        throw new Error(`${date} tarihinde kontenjan dolmuş.`);
-      }
-
-      bookingDetails.push({
-        date,
-        price: parseFloat(config.price),
-        quota_id: config.id,
-      });
-
-      totalCost += parseFloat(config.price);
+    if (slotResult.rows.length === 0) {
+      throw new Error("Slot not found.");
     }
 
-    // 2. Kullanıcının toplam bakiyesini kontrol et
-    const userRes = await client.query(
+    const slot = slotResult.rows[0];
+
+    // 2. Verify slot belongs to the requested gym
+    if (slot.gym_id !== gym_id) {
+      throw new Error("Slot does not belong to this gym.");
+    }
+
+    // 3. Fetch or create slot_reservations record for this date
+    const reservationResult = await client.query(
+      `SELECT id, current_count, max_capacity
+       FROM slot_reservations
+       WHERE slot_id = $1 AND reservation_date = $2
+       FOR UPDATE`,
+      [slot_id, booking_date],
+    );
+
+    let reservation;
+    if (reservationResult.rows.length === 0) {
+      // Create new reservation record
+      const createResult = await client.query(
+        `INSERT INTO slot_reservations (slot_id, reservation_date, current_count, max_capacity)
+         VALUES ($1, $2, 0, $3)
+         RETURNING *`,
+        [slot_id, booking_date, slot.max_capacity],
+      );
+      reservation = createResult.rows[0];
+    } else {
+      reservation = reservationResult.rows[0];
+    }
+
+    // 4. Validate slot availability
+    const validation = validateSlotBooking(
+      slot,
+      booking_date,
+      reservation.current_count,
+      reservation.max_capacity,
+    );
+
+    if (!validation.valid) {
+      throw new Error(validation.reason);
+    }
+
+    // 5. Fetch gym pricing
+    const gymResult = await client.query(
+      "SELECT membership_price FROM gyms WHERE id = $1",
+      [gym_id],
+    );
+
+    if (gymResult.rows.length === 0) {
+      throw new Error("Gym not found.");
+    }
+
+    const price = parseFloat(gymResult.rows[0].membership_price);
+
+    // 6. Check user wallet balance
+    const userResult = await client.query(
       "SELECT wallet_balance FROM users WHERE id = $1 FOR UPDATE",
       [user_id],
     );
-    const userBalance = parseFloat(userRes.rows[0].wallet_balance);
 
-    if (userBalance < totalCost) {
+    const userBalance = parseFloat(userResult.rows[0].wallet_balance);
+
+    if (userBalance < price) {
       throw new Error(
-        `Yetersiz bakiye. Gerekli: ₺${totalCost.toFixed(2)}, Mevcut: ₺${userBalance.toFixed(2)}`,
+        `Insufficient balance. Required: ₺${price.toFixed(2)}, Available: ₺${userBalance.toFixed(2)}`,
       );
     }
 
-    // 3. Her tarih için rezervasyon oluştur
-    for (const detail of bookingDetails) {
-      // Bakiye düş
-      await client.query(
-        "UPDATE users SET wallet_balance = wallet_balance - $1 WHERE id = $2",
-        [detail.price, user_id],
-      );
+    // 7. Deduct from wallet
+    await client.query(
+      "UPDATE users SET wallet_balance = wallet_balance - $1 WHERE id = $2",
+      [price, user_id],
+    );
 
-      // Kota azalt
-      await client.query(
-        "UPDATE gym_config SET remaining_quota = remaining_quota - 1 WHERE gym_id = $1 AND target_date = $2",
-        [gym_id, detail.date],
-      );
+    // 8. Increment slot reservation count
+    await client.query(
+      "UPDATE slot_reservations SET current_count = current_count + 1 WHERE id = $1",
+      [reservation.id],
+    );
 
-      // Rezervasyon oluştur
-      const bookingRes = await client.query(
-        "INSERT INTO bookings (user_id, gym_id, booking_date, paid_amount, status) VALUES ($1, $2, $3, $4, $5) RETURNING *",
-        [user_id, gym_id, detail.date, detail.price, "active"],
-      );
+    // 9. Create booking record
+    const bookingResult = await client.query(
+      `INSERT INTO bookings (
+        user_id, gym_id, booking_date, booking_date_only, 
+        slot_id, slot_start_time, slot_end_time, 
+        paid_amount, status
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      RETURNING *`,
+      [
+        user_id,
+        gym_id,
+        `${booking_date} ${slot.start_time}`, // Full datetime
+        booking_date, // Just the date
+        slot_id,
+        slot.start_time,
+        slot.end_time,
+        price,
+        "active",
+      ],
+    );
 
-      // Cüzdan hareketi kaydet
-      await client.query(
-        "INSERT INTO wallet_transactions (user_id, booking_id, amount, type) VALUES ($1, $2, $3, $4)",
-        [user_id, bookingRes.rows[0].id, -detail.price, "payment"],
-      );
-
-      createdBookings.push(bookingRes.rows[0]);
-    }
+    // 10. Log wallet transaction
+    await client.query(
+      `INSERT INTO wallet_transactions (user_id, booking_id, amount, type)
+       VALUES ($1, $2, $3, $4)`,
+      [user_id, bookingResult.rows[0].id, -price, "payment"],
+    );
 
     await client.query("COMMIT");
 
     res.status(201).json({
       success: true,
-      message: `${createdBookings.length} rezervasyon başarıyla oluşturuldu!`,
-      data: createdBookings,
-      total_cost: totalCost,
+      message: "Booking created successfully.",
+      data: bookingResult.rows[0],
+      slot_info: {
+        slot_name: slot.slot_name,
+        time_range: `${slot.start_time} - ${slot.end_time}`,
+      },
     });
   } catch (error) {
     await client.query("ROLLBACK");
-    console.error("Booking Error:", error.message);
-    res.status(400).json({ message: error.message });
+    console.error("Slot Booking Error:", error.message);
+    res.status(400).json({
+      success: false,
+      message: error.message,
+    });
   } finally {
     client.release();
   }
 };
 
-// @desc    Rezervasyonu İptal Et (Kısmen veya Tam İade)
-// @route   DELETE /api/bookings/:id
-// @access  Private (Sadece User)
-const cancelBooking = async (req, res) => {
+/**
+ * @desc    Cancel a slot-based booking
+ * @route   DELETE /api/bookings/:id
+ * @access  Private (User only)
+ *
+ * Updated to handle slot_reservations table
+ */
+const cancelSlotBooking = async (req, res) => {
   const { id } = req.params;
   const user_id = req.user.id;
 
-  const client = await pool.connect(); // Transaction için
+  const client = await pool.connect();
 
   try {
     await client.query("BEGIN");
 
-    // 1. Rezervasyonu getir ve kullanıcı kontrolü yap
-    const bookingRes = await client.query(
+    // 1. Fetch booking
+    const bookingResult = await client.query(
       "SELECT * FROM bookings WHERE id = $1 FOR UPDATE",
       [id],
     );
 
-    if (bookingRes.rows.length === 0) {
-      throw new Error("Rezervasyon bulunamadı.");
+    if (bookingResult.rows.length === 0) {
+      throw new Error("Booking not found.");
     }
 
-    const booking = bookingRes.rows[0];
+    const booking = bookingResult.rows[0];
 
-    // 2. Yetki kontrolü (Sadece kendi rezervasyonunu iptal edebilir)
+    // 2. Verify ownership
     if (booking.user_id !== user_id) {
-      throw new Error("Bu rezervasyonu iptal etme yetkiniz yok.");
+      throw new Error("You do not have permission to cancel this booking.");
     }
 
-    // 3. Zaten iptal/tamamlanmış mı kontrol et
+    // 3. Check if already cancelled
     if (booking.status !== "active") {
       throw new Error(
-        `Sadece aktif rezervasyonlar iptal edilebilir. Mevcut durum: ${booking.status}`,
+        `Only active bookings can be cancelled. Current status: ${booking.status}`,
       );
     }
 
-    // 4. Kalan saati hesapla (Türkiye saatine göre)
+    // 4. Calculate refund (same logic as before)
     const hoursRemaining = hoursUntil(booking.booking_date);
-
     let userRefund = 0;
     let ownerRefund = 0;
     const paidAmount = parseFloat(booking.paid_amount);
 
-    // 5. İade miktarını hesapla
     if (hoursRemaining >= 12) {
-      // 12 saat + kala: %100 iade
       userRefund = paidAmount;
       ownerRefund = 0;
     } else if (hoursRemaining > 0) {
-      // 12 saatten az kala: %50 iade kullanıcıya, %50 salon sahibine
       userRefund = paidAmount * 0.5;
       ownerRefund = paidAmount * 0.5;
     } else {
-      // Geçmiş rezervasyon
-      throw new Error("Geçmiş bir rezervasyonu iptal edemezsiniz.");
+      throw new Error("Cannot cancel past bookings.");
     }
 
-    // 6. Salon sahibinin wallet'ini getir (Eğer owner refund varsa)
+    // 5. Refund to user
+    await client.query(
+      "UPDATE users SET wallet_balance = wallet_balance + $1 WHERE id = $2",
+      [userRefund, user_id],
+    );
+
+    // 6. Refund to owner (if applicable)
     if (ownerRefund > 0) {
-      const gymRes = await client.query(
+      const gymResult = await client.query(
         "SELECT owner_id FROM gyms WHERE id = $1",
         [booking.gym_id],
       );
-      const owner_id = gymRes.rows[0].owner_id;
+      const owner_id = gymResult.rows[0].owner_id;
 
-      // Owner'ın bakiyesini artır
       await client.query(
         "UPDATE users SET wallet_balance = wallet_balance + $1 WHERE id = $2",
         [ownerRefund, owner_id],
       );
     }
 
-    // 7. Kullanıcı bakiyesini artır
-    await client.query(
-      "UPDATE users SET wallet_balance = wallet_balance + $1 WHERE id = $2",
-      [userRefund, user_id],
-    );
+    // 7. Decrement slot reservation count
+    if (booking.slot_id) {
+      await client.query(
+        `UPDATE slot_reservations 
+         SET current_count = GREATEST(current_count - 1, 0)
+         WHERE slot_id = $1 AND reservation_date = $2`,
+        [booking.slot_id, booking.booking_date_only],
+      );
+    }
 
-    // 8. Salon kotasını geri artır
-    await client.query(
-      "UPDATE gym_config SET remaining_quota = remaining_quota + 1 WHERE gym_id = $1 AND target_date = $2",
-      [booking.gym_id, booking.booking_date],
-    );
-
-    // 9. Rezervasyon durumunu "cancelled" olarak güncelle
-    const cancelledBooking = await client.query(
+    // 8. Update booking status
+    const cancelledResult = await client.query(
       "UPDATE bookings SET status = $1 WHERE id = $2 RETURNING *",
       ["cancelled", id],
     );
 
-    // 10. Cüzdan hareketlerine log ekle
+    // 9. Log transactions
     await client.query(
-      "INSERT INTO wallet_transactions (user_id, booking_id, amount, type) VALUES ($1, $2, $3, $4)",
+      `INSERT INTO wallet_transactions (user_id, booking_id, amount, type)
+       VALUES ($1, $2, $3, $4)`,
       [user_id, id, userRefund, "refund"],
     );
 
     if (ownerRefund > 0) {
-      const gymRes = await client.query(
+      const gymResult = await client.query(
         "SELECT owner_id FROM gyms WHERE id = $1",
         [booking.gym_id],
       );
-      const owner_id = gymRes.rows[0].owner_id;
+      const owner_id = gymResult.rows[0].owner_id;
 
       await client.query(
-        "INSERT INTO wallet_transactions (user_id, booking_id, amount, type) VALUES ($1, $2, $3, $4)",
+        `INSERT INTO wallet_transactions (user_id, booking_id, amount, type)
+         VALUES ($1, $2, $3, $4)`,
         [owner_id, id, ownerRefund, "cancellation_fee"],
       );
     }
@@ -278,13 +335,13 @@ const cancelBooking = async (req, res) => {
 
     res.json({
       success: true,
-      message: `Rezervasyon iptal edildi. Kullanıcıya ₺${userRefund.toFixed(2)} iade edildi.${
+      message: `Booking cancelled. Refunded ₺${userRefund.toFixed(2)} to user.${
         ownerRefund > 0
-          ? ` Salon sahibine ₺${ownerRefund.toFixed(2)} aktarıldı.`
+          ? ` ₺${ownerRefund.toFixed(2)} transferred to owner.`
           : ""
       }`,
       data: {
-        booking: cancelledBooking.rows[0],
+        booking: cancelledResult.rows[0],
         userRefund,
         ownerRefund,
         hoursRemaining: Math.round(hoursRemaining * 100) / 100,
@@ -293,7 +350,10 @@ const cancelBooking = async (req, res) => {
   } catch (error) {
     await client.query("ROLLBACK");
     console.error("Cancellation Error:", error.message);
-    res.status(400).json({ message: error.message });
+    res.status(400).json({
+      success: false,
+      message: error.message,
+    });
   } finally {
     client.release();
   }
@@ -315,4 +375,9 @@ const getBookingById = async (req, res) => {
   res.json({ success: true, data: rows[0] });
 };
 
-module.exports = { getBookings, createBooking, cancelBooking, getBookingById };
+module.exports = {
+  getBookings,
+  createSlotBooking,
+  cancelSlotBooking,
+  getBookingById,
+};
