@@ -45,9 +45,6 @@ app.use("/api/wallet", require("./src/routes/walletRoutes"));
 app.use("/api/analytics", require("./src/routes/analyticsRoutes"));
 app.use("/api/reviews", require("./src/routes/reviewRoutes"));
 
-// Slot-Based Reservation System
-app.use("/api/slots", require("./src/routes/slotRoutes"));
-
 // Rezervasyon ve QR Sistemi (Tek bir prefix altında birleşti)
 // Önemli: bookingRoutes genel rezervasyon işlerini, qrRoutes ise QR üretimini yönetir.
 app.use("/api/bookings", require("./src/routes/qrRoutes")); // önce spesifik

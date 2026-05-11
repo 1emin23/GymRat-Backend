@@ -5,8 +5,7 @@ const pool = require("../config/db");
 // @access  Private (Sadece Salon Sahibi)
 const setGymConfig = async (req, res) => {
   const { gymId } = req.params;
-  const { target_date, total_quota, price, age_restriction, is_open } =
-    req.body;
+  const { target_date, total_quota, price } = req.body;
   const owner_id = req.user.id;
 
   try {
@@ -25,28 +24,19 @@ const setGymConfig = async (req, res) => {
     // 2. Config Oluşturma veya Güncelleme (ON CONFLICT)
     // remaining_quota ilk oluşturulurken total_quota'ya eşitlenir.
     const config = await pool.query(
-      `INSERT INTO gym_config (gym_id, target_date, total_quota, remaining_quota, price, age_restriction, is_open)
-             VALUES ($1, $2, $3, $3, $4, $5, $6)
-             ON CONFLICT (gym_id, target_date)
-             DO UPDATE SET 
-                total_quota = EXCLUDED.total_quota,
-                price = EXCLUDED.price,
-                age_restriction = EXCLUDED.age_restriction,
-                is_open = EXCLUDED.is_open,
-                remaining_quota = CASE 
-                    WHEN gym_config.total_quota != EXCLUDED.total_quota 
-                    THEN EXCLUDED.total_quota -- Kota değişirse sıfırla (Basit mantık)
-                    ELSE gym_config.remaining_quota 
-                END
-             RETURNING *`,
-      [
-        gymId,
-        target_date,
-        total_quota,
-        price,
-        age_restriction || 0,
-        is_open !== undefined ? is_open : true,
-      ],
+      `INSERT INTO gym_config (gym_id, target_date, total_quota, remaining_quota, price)
+       VALUES ($1, $2, $3, $3, $4)
+       ON CONFLICT (gym_id, target_date)
+       DO UPDATE SET
+         total_quota = EXCLUDED.total_quota,
+         price = EXCLUDED.price,
+         remaining_quota = CASE
+           WHEN gym_config.total_quota != EXCLUDED.total_quota
+           THEN EXCLUDED.total_quota
+           ELSE gym_config.remaining_quota
+         END
+       RETURNING *`,
+      [gymId, target_date, total_quota, price],
     );
 
     res.status(200).json({
