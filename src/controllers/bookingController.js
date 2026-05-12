@@ -280,14 +280,14 @@ const cancelBooking = async (req, res) => {
     if (booking.slot_index != null) {
       await client.query(
         `UPDATE gym_config
-         SET remaining_quota = remaining_quota + 1
+         SET remaining_quota = LEAST(remaining_quota + 1, total_quota)
          WHERE gym_id = $1 AND target_date = $2 AND slot_index = $3`,
         [booking.gym_id, booking.booking_date, booking.slot_index],
       );
     } else {
       await client.query(
         `UPDATE gym_config
-         SET remaining_quota = remaining_quota + 1
+         SET remaining_quota = LEAST(remaining_quota + 1, total_quota)
          WHERE gym_id = $1 AND target_date = $2`,
         [booking.gym_id, booking.booking_date],
       );
@@ -339,6 +339,7 @@ const cancelBooking = async (req, res) => {
   } catch (error) {
     await client.query("ROLLBACK");
     console.error("Cancellation Error:", error.message);
+    console.error("Cancellation Stack:", error.stack);
     res.status(400).json({
       success: false,
       message: error.message,
