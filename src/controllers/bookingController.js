@@ -14,19 +14,33 @@ const getBookings = async (req, res) => {
     if (role === "owner") {
       bookings = await pool.query(
         `SELECT b.id, b.user_id, b.gym_id, b.booking_date, b.paid_amount, b.status, b.created_at,
-                g.name as gym_name, u.full_name, u.email
+                g.name as gym_name, u.full_name, u.email,
+                gc.start_time, gc.end_time
          FROM bookings b
          JOIN gyms g ON b.gym_id = g.id
          JOIN users u ON b.user_id = u.id
+         LEFT JOIN gym_config gc ON gc.gym_id = b.gym_id
+           AND gc.target_date = b.booking_date
+           AND gc.slot_index = (
+             SELECT MIN(gc2.slot_index) FROM gym_config gc2
+             WHERE gc2.gym_id = b.gym_id AND gc2.target_date = b.booking_date
+           )
          WHERE g.owner_id = $1
          ORDER BY b.booking_date DESC`,
         [user_id],
       );
     } else {
       bookings = await pool.query(
-        `SELECT b.id, b.user_id, b.gym_id, b.booking_date, b.paid_amount, b.status, b.created_at, g.name as gym_name
+        `SELECT b.id, b.user_id, b.gym_id, b.booking_date, b.paid_amount, b.status, b.created_at, g.name as gym_name,
+                gc.start_time, gc.end_time
          FROM bookings b
          JOIN gyms g ON b.gym_id = g.id
+         LEFT JOIN gym_config gc ON gc.gym_id = b.gym_id
+           AND gc.target_date = b.booking_date
+           AND gc.slot_index = (
+             SELECT MIN(gc2.slot_index) FROM gym_config gc2
+             WHERE gc2.gym_id = b.gym_id AND gc2.target_date = b.booking_date
+           )
          WHERE b.user_id = $1
          ORDER BY b.booking_date DESC`,
         [user_id],
@@ -52,7 +66,7 @@ const getBookings = async (req, res) => {
  * @body    { gym_id, booking_date (YYYY-MM-DD) }
  */
 const createBooking = async (req, res) => {
-  const { gym_id, booking_date } = req.body;
+  const { gym_id, booking_date, slot_index } = req.body;
   const user_id = req.user.id;
 
   if (!gym_id || !booking_date) {
@@ -75,20 +89,48 @@ const createBooking = async (req, res) => {
   try {
     await client.query("BEGIN");
 
-    // 1. Fetch daily config for the target date
-    const configResult = await client.query(
-      `SELECT id, total_quota, remaining_quota, price
-       FROM gym_config
-       WHERE gym_id = $1 AND target_date = $2
-       FOR UPDATE`,
-      [gym_id, isoDate],
-    );
+    // 1. Fetch daily config for the target date (and slot if specified)
+    let configQuery;
+    let configParams;
+    if (slot_index != null) {
+      configQuery = `SELECT id, slot_index, total_quota, remaining_quota, price, is_open
+                     FROM gym_config
+                     WHERE gym_id = $1 AND target_date = $2 AND slot_index = $3
+                     FOR UPDATE`;
+      configParams = [gym_id, isoDate, slot_index];
+    } else {
+      configQuery = `SELECT id, slot_index, total_quota, remaining_quota, price, is_open
+                      FROM gym_config
+                      WHERE gym_id = $1 AND target_date = $2 AND is_open = TRUE
+                      ORDER BY slot_index ASC LIMIT 1
+                      FOR UPDATE`;
+      configParams = [gym_id, isoDate];
+    }
+
+    const configResult = await client.query(configQuery, configParams);
 
     if (configResult.rows.length === 0) {
+      // Debug: check if any config exists at all for this gym+date
+      const debugResult = await client.query(
+        `SELECT id, slot_index, is_open, remaining_quota, target_date FROM gym_config WHERE gym_id = $1 AND target_date = $2`,
+        [gym_id, isoDate],
+      );
+      console.error("Booking config miss:", {
+        gym_id,
+        isoDate,
+        slot_index,
+        rowsFound: debugResult.rows.length,
+        rows: debugResult.rows,
+      });
       throw new Error("No daily configuration found for this date.");
     }
 
     const config = configResult.rows[0];
+
+    if (config.is_open === false) {
+      throw new Error("This slot is closed for booking.");
+    }
+
     const remaining = Number(config.remaining_quota ?? 0);
     const total = Number(config.total_quota ?? 0);
     if (total <= 0 || remaining <= 0) {

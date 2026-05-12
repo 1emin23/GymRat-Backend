@@ -71,17 +71,40 @@ const createGym = async (req, res) => {
     );
 
     const gymId = newGym.rows[0].id;
+    console.log("New Gym Created with ID:", gymId);
 
-    // 3. Otomatik 30 Günlük gym_config oluşturma (Türkiye saatine göre)
+    // 3. Otomatik 30 Günlük gym_config oluşturma (3 varsayılan slot)
     if (daily_capacity) {
+      const defaultSlots = [
+        { slot_index: 1, start_time: opening_time || "06:00", end_time: "12:00" },
+        { slot_index: 2, start_time: "12:00", end_time: "18:00" },
+        { slot_index: 3, start_time: "18:00", end_time: closing_time || "23:00" },
+      ];
+
       for (let i = 0; i < 30; i++) {
         const dateStr = addDays(i);
-        await pool.query(
-          `INSERT INTO gym_config (gym_id, target_date, total_quota, remaining_quota, price, is_open)
-           VALUES ($1, $2, $3, $3, $4, true)
-           ON CONFLICT (gym_id, target_date) DO NOTHING`,
-          [gymId, dateStr, daily_capacity, membership_price],
-        );
+        for (const slot of defaultSlots) {
+          await pool.query(
+            `INSERT INTO gym_config (gym_id, target_date, slot_index, start_time, end_time, total_quota, remaining_quota, price, is_open)
+             VALUES ($1, $2, $3, $4, $5, $6, $6, $7, TRUE)
+             ON CONFLICT (gym_id, target_date, slot_index)
+             DO UPDATE SET
+               start_time = EXCLUDED.start_time,
+               end_time = EXCLUDED.end_time,
+               total_quota = EXCLUDED.total_quota,
+               remaining_quota = LEAST(
+                 GREATEST(
+                   gym_config.remaining_quota - gym_config.total_quota + EXCLUDED.total_quota,
+                   0
+                 ),
+                 EXCLUDED.total_quota
+               ),
+               price = EXCLUDED.price,
+               is_open = EXCLUDED.is_open,
+               updated_at = CURRENT_TIMESTAMP`,
+            [gymId, dateStr, slot.slot_index, slot.start_time, slot.end_time, daily_capacity, membership_price],
+          );
+        }
       }
     }
 
@@ -168,14 +191,15 @@ const getGymConfig = async (req, res) => {
   const { id } = req.params;
   try {
     const configs = await pool.query(
-      `SELECT id, target_date, total_quota, remaining_quota, price, is_open
-       FROM gym_config WHERE gym_id = $1 AND target_date >= CURRENT_DATE
-       ORDER BY target_date ASC`,
+      `SELECT id, gym_id, target_date, slot_index, start_time, end_time, total_quota, remaining_quota, price, is_open
+       FROM gym_config WHERE gym_id = $1 AND target_date >= (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Istanbul')::DATE
+       ORDER BY target_date ASC, slot_index ASC`,
       [id],
     );
     res.json({ success: true, data: configs.rows });
   } catch (error) {
-    res.status(500).json({ message: "Konfigürasyon hatası." });
+    console.error("getGymConfig Error:", error);
+    res.status(500).json({ success: false, message: "Konfigürasyon hatası." });
   }
 };
 

@@ -12,16 +12,26 @@ const TIMEZONE = "Europe/Istanbul";
  * @desc    Spor salonu için haftalık konfigürasyon (slot'lar, açık günler, fiyatlar)
  * @route   POST /api/gyms/:gymId/config
  * @access  Private (Sadece Salon Sahibi)
- * @body    { selected_days: boolean[], apply_monthly: boolean, slots: [...] }
+ * @body    { selected_days: boolean[7], apply_monthly: boolean, slots: [...] }
+ *
+ * UPSERT mantığı:
+ *   - YENİ satır → remaining_quota = total_quota (tam kapasite)
+ *   - MEVCUT satır (conflict) → remaining_quota korunur, total_quota değişirse fark eklenir/çıkarılır
+ *     Formül: GREATEST(old_remaining - old_total + new_total, 0) → min 0, max yeni total_quota
  */
 const setGymConfig = async (req, res) => {
   const { gymId } = req.params;
   const { selected_days, apply_monthly, slots } = req.body;
   const owner_id = req.user.id;
-
+  console.log(
+    "setgymconfig kotrollerındayız ",
+    gymId,
+    owner_id,
+    selected_days,
+    slots,
+  );
   // ============ VALIDATION ============
 
-  // 1. Payload yapısı kontrolü
   if (!Array.isArray(selected_days) || selected_days.length !== 7) {
     return res.status(400).json({
       success: false,
@@ -56,7 +66,6 @@ const setGymConfig = async (req, res) => {
     });
   }
 
-  // 2. En az bir gün seçili olmalı
   if (!selected_days.some((day) => day === true)) {
     return res.status(400).json({
       success: false,
@@ -70,36 +79,34 @@ const setGymConfig = async (req, res) => {
     });
   }
 
-  // 3. Slot'ları valide et
+  // Slot validasyonu
   const slotErrors = [];
+  const normalizedSlots = slots
+    .slice()
+    .sort((a, b) => Number(a.slot_index) - Number(b.slot_index));
 
-  for (let i = 0; i < slots.length; i++) {
-    const slot = slots[i];
+  const usedIndices = new Set();
 
-    // Slot yapısı
-    if (
-      !slot.slot_index ||
-      !slot.start_time ||
-      !slot.end_time ||
-      slot.total_quota === undefined ||
-      slot.price === undefined
-    ) {
+  for (let i = 0; i < normalizedSlots.length; i++) {
+    const slot = normalizedSlots[i];
+
+    if (!slot.slot_index || ![1, 2, 3].includes(slot.slot_index)) {
       slotErrors.push({
-        field: `slots[${i}]`,
-        message: "Missing required slot fields",
+        field: `slots[${i}].slot_index`,
+        message: "slot_index must be 1, 2, or 3",
       });
       continue;
     }
 
-    // Slot index (1, 2, 3)
-    if (![1, 2, 3].includes(slot.slot_index)) {
+    if (usedIndices.has(slot.slot_index)) {
       slotErrors.push({
         field: `slots[${i}].slot_index`,
-        message: "Invalid slot_index",
+        message: `Duplicate slot_index ${slot.slot_index}`,
       });
+      continue;
     }
+    usedIndices.add(slot.slot_index);
 
-    // Zaman formatı (HH:MM)
     const timeRegex = /^([0-1][0-9]|2[0-3]):[0-5][0-9]$/;
     if (!timeRegex.test(slot.start_time)) {
       slotErrors.push({
@@ -114,24 +121,21 @@ const setGymConfig = async (req, res) => {
       });
     }
 
-    // end_time > start_time
     if (slot.start_time >= slot.end_time) {
       slotErrors.push({
-        field: `slots[${i}].start_time`,
-        message: "Slot end time must be after start time",
+        field: `slots[${i}].end_time`,
+        message: "end_time must be after start_time",
       });
     }
 
-    // Quota pozitif
-    if (slot.total_quota <= 0) {
+    if (slot.total_quota == null || slot.total_quota <= 0) {
       slotErrors.push({
         field: `slots[${i}].total_quota`,
-        message: "Quota must be positive",
+        message: "Quota must be a positive integer",
       });
     }
 
-    // Price negatif değil
-    if (slot.price < 0) {
+    if (slot.price == null || slot.price < 0) {
       slotErrors.push({
         field: `slots[${i}].price`,
         message: "Price cannot be negative",
@@ -139,10 +143,10 @@ const setGymConfig = async (req, res) => {
     }
   }
 
-  // Slot çakışması kontrolü (slot N+1 start >= slot N end)
-  if (!slotErrors.length) {
-    for (let i = 0; i < slots.length - 1; i++) {
-      if (slots[i + 1].start_time < slots[i].end_time) {
+  // Slot çakışma kontrolü (sıralı olduğu için slot[i].end_time <= slot[i+1].start_time olmalı)
+  if (slotErrors.length === 0) {
+    for (let i = 0; i < normalizedSlots.length - 1; i++) {
+      if (normalizedSlots[i + 1].start_time < normalizedSlots[i].end_time) {
         slotErrors.push({
           field: `slots[${i + 1}].start_time`,
           message: `Slot ${i + 2} must not overlap with Slot ${i + 1}`,
@@ -164,20 +168,27 @@ const setGymConfig = async (req, res) => {
   const client = await pool.connect();
 
   try {
-    // 1. Yetki Kontrolü: Bu salon gerçekten bu kullanıcıya mı ait?
-    const gymCheck = await client.query(
-      "SELECT id FROM gyms WHERE id = $1 AND owner_id = $2",
-      [gymId, owner_id],
+    // 1. Salon mevcut mu ve yetki kontrolü
+    const gymExists = await client.query(
+      "SELECT id, owner_id FROM gyms WHERE id = $1",
+      [gymId],
     );
 
-    if (gymCheck.rows.length === 0) {
+    if (gymExists.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Gym not found",
+      });
+    }
+
+    if (gymExists.rows[0].owner_id !== owner_id) {
       return res.status(403).json({
         success: false,
         message: "Unauthorized to configure this gym",
       });
     }
 
-    // 2. Tarih listesi oluştur (selected_days + apply_monthly'e göre)
+    // 2. Hedef tarihleri oluştur
     const targetDates = generateTargetDates(selected_days, apply_monthly);
 
     if (targetDates.length === 0) {
@@ -187,81 +198,80 @@ const setGymConfig = async (req, res) => {
       });
     }
 
-    // 3. Transaction başla
+    // 3. Transaction başlat
     await client.query("BEGIN");
 
-    // 4. Eski kayıtları sil (date range içinde)
-    const minDate = targetDates[0];
-    const maxDate = targetDates[targetDates.length - 1];
-
+    // 4. Eski şemadan kalan (slot_index NULL olan) satırları kapat
+    //    Bu satırlar createGym'in eski kodundan kalma olabilir
     await client.query(
-      `DELETE FROM gym_config
-       WHERE gym_id = $1 AND target_date BETWEEN $2 AND $3`,
-      [gymId, minDate, maxDate],
+      `UPDATE gym_config SET is_open = FALSE
+       WHERE gym_id = $1
+       AND target_date = ANY($2)
+       AND slot_index IS NULL`,
+      [gymId, targetDates],
     );
 
-    // 5. Yeni kayıtları bulk insert
-    const values = [];
-    let paramIndex = 1;
+    // 5. Her tarih × her slot için UPSERT
+    //    ON CONFLICT (gym_id, target_date, slot_index) → akıllı kota güncellemesi
+    //    Yeni satır: remaining_quota = total_quota (tam kapasite)
+    //    Mevcut satır: remaining_quota = LEAST(GREATEST(old_remaining - old_total + new_total, 0), new_total)
+    //    Bu sayede mevcut rezervasyonlar korunur, kota değişikliği orantılı yansıtılır
+    let upsertedCount = 0;
 
     for (const date of targetDates) {
-      for (const slot of slots) {
-        values.push(
-          `($${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++})`,
+      for (const slot of normalizedSlots) {
+        const result = await client.query(
+          `INSERT INTO gym_config
+            (gym_id, target_date, slot_index, start_time, end_time, total_quota, remaining_quota, price, is_open)
+           VALUES ($1, $2, $3, $4, $5, $6, $6, $7, TRUE)
+           ON CONFLICT (gym_id, target_date, slot_index)
+           DO UPDATE SET
+             start_time  = EXCLUDED.start_time,
+             end_time    = EXCLUDED.end_time,
+             total_quota = EXCLUDED.total_quota,
+             remaining_quota = LEAST(
+               GREATEST(
+                 gym_config.remaining_quota - gym_config.total_quota + EXCLUDED.total_quota,
+                 0
+               ),
+               EXCLUDED.total_quota
+             ),
+             price    = EXCLUDED.price,
+             is_open  = EXCLUDED.is_open,
+             updated_at = CURRENT_TIMESTAMP
+           RETURNING id`,
+          [
+            gymId,
+            date,
+            slot.slot_index,
+            slot.start_time,
+            slot.end_time,
+            slot.total_quota,
+            slot.price,
+          ],
         );
+        upsertedCount += result.rowCount;
       }
     }
-
-    const flatParams = [];
-    for (const date of targetDates) {
-      for (const slot of slots) {
-        flatParams.push(
-          gymId,
-          date,
-          slot.slot_index,
-          slot.start_time,
-          slot.end_time,
-          slot.total_quota,
-          slot.total_quota, // remaining_quota = total_quota (initially)
-          slot.price,
-        );
-      }
-    }
-
-    const insertQuery = `
-      INSERT INTO gym_config 
-        (gym_id, target_date, slot_index, start_time, end_time, total_quota, remaining_quota, price)
-      VALUES ${values.join(",")}
-    `;
-
-    await client.query(insertQuery, flatParams);
 
     // 6. Transaction commit
     await client.query("COMMIT");
-
-    // 7. Success response
-    const recordsCreated = targetDates.length * 3; // 3 slots per date
 
     res.status(200).json({
       success: true,
       message: "Gym configuration saved successfully",
       data: {
         gym_id: parseInt(gymId),
-        records_created: recordsCreated,
+        records_upserted: upsertedCount,
         date_range: {
-          from: minDate,
-          to: maxDate,
+          from: targetDates[0],
+          to: targetDates[targetDates.length - 1],
         },
         selected_days,
         apply_monthly,
-        slots_summary: slots.map(
-          (s) =>
-            `${s.slot_index}: ${s.start_time} - ${s.end_time} (${s.total_quota} spots @ ${s.price} TRY)`,
-        ),
       },
     });
   } catch (error) {
-    // Hata durumunda transaction'ı rollback et
     await client.query("ROLLBACK").catch(() => {});
 
     console.error("GymConfig Error:", error);
@@ -282,26 +292,20 @@ const setGymConfig = async (req, res) => {
  * @returns {string[]} YYYY-MM-DD formatında tarih dizisi
  */
 function generateTargetDates(selected_days, apply_monthly) {
-  const baseDate = dayjs().tz(TIMEZONE);
+  const baseDate = dayjs().tz(TIMEZONE).startOf("day");
   const daysToGenerate = apply_monthly ? 30 : 7;
   const targetDates = [];
 
-  let currentDate = baseDate;
-  let daysMatched = 0;
-
-  while (daysMatched < daysToGenerate) {
+  for (let i = 0; i < daysToGenerate; i++) {
+    const currentDate = baseDate.add(i, "day");
     const dayOfWeek = currentDate.day(); // 0=Sunday, 1=Monday, ..., 6=Saturday
     // selected_days: 0=Monday, 1=Tuesday, ..., 6=Sunday
     // dayjs: 0=Sunday, 1=Monday, ..., 6=Saturday
-    // Convert dayjs day (0-6 Sun-Sat) to selected_days index (0-6 Mon-Sun)
     const selectedDaysIndex = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
 
     if (selected_days[selectedDaysIndex] === true) {
       targetDates.push(currentDate.format("YYYY-MM-DD"));
-      daysMatched++;
     }
-
-    currentDate = currentDate.add(1, "day");
   }
 
   return targetDates;

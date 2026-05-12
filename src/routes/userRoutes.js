@@ -14,9 +14,9 @@ router.get("/profile", protect, async (req, res) => {
       [req.user.id],
     );
 
-    console.log("Profile fetch successful for user:", req.user.id);
     console.log(
-      `profile info: ${JSON.stringify(user.rows[0])}, req info: ${JSON.stringify(req.user)}`,
+      "Profile fetch successful for user in the userRoutes:",
+      req.user.id,
     );
 
     if (user.rows.length === 0) {

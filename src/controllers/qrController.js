@@ -88,25 +88,55 @@ exports.generateQR = async (req, res) => {
     const userId = req.user.id;
     const todayDate = today(); // Türkiye saatine göre bugünün tarihi
 
-    const activeBooking = await pool.query(
-      `SELECT id, booking_date
-       FROM bookings
-       WHERE user_id = $1
-         AND booking_date = $2
-         AND status = 'active'
-       ORDER BY id DESC
-       LIMIT 1`,
-      [userId, todayDate],
-    );
+    // Support both GET /qr (no param) and POST /:id/generate-qr (with param)
+    const bookingIdParam = req.params.id
+      ? Number(req.params.id)
+      : null;
 
-    if (activeBooking.rows.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Bugüne ait aktif rezervasyon bulunamadı.",
-      });
+    let bookingId;
+
+    if (bookingIdParam) {
+      // Verify the booking belongs to this user and is active
+      const result = await pool.query(
+        `SELECT id, booking_date, status FROM bookings WHERE id = $1 AND user_id = $2 AND status = 'active'`,
+        [bookingIdParam, userId],
+      );
+      if (result.rows.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Aktif rezervasyon bulunamadı.",
+        });
+      }
+      const booking = result.rows[0];
+      if (!isSameDay(booking.booking_date, todayDate)) {
+        return res.status(400).json({
+          success: false,
+          message: "Bu rezervasyon bugüne ait değil.",
+        });
+      }
+      bookingId = bookingIdParam;
+    } else {
+      // Legacy: find today's active booking
+      const activeBooking = await pool.query(
+        `SELECT id, booking_date
+         FROM bookings
+         WHERE user_id = $1
+           AND booking_date = $2
+           AND status = 'active'
+         ORDER BY id DESC
+         LIMIT 1`,
+        [userId, todayDate],
+      );
+
+      if (activeBooking.rows.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Bugüne ait aktif rezervasyon bulunamadı.",
+        });
+      }
+      bookingId = activeBooking.rows[0].id;
     }
 
-    const bookingId = activeBooking.rows[0].id;
     const qrToken = String(bookingId);
     const expiresAtResult = await pool.query(
       "SELECT date_trunc('day', NOW()) + interval '1 day' - interval '1 second' AS expires_at",

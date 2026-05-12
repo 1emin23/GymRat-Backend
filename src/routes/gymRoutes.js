@@ -4,7 +4,6 @@ const {
   createGym,
   getAllGyms,
   searchGyms,
-  seedTestData,
   getOwnerGyms,
   updateGym,
   deleteGym,
