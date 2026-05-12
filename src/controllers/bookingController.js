@@ -166,10 +166,10 @@ const createBooking = async (req, res) => {
     // 5. Create booking record
     const bookingResult = await client.query(
       `INSERT INTO bookings (
-        user_id, gym_id, booking_date, paid_amount, status
-      ) VALUES ($1, $2, $3, $4, $5)
+        user_id, gym_id, booking_date, paid_amount, status, slot_index
+      ) VALUES ($1, $2, $3, $4, $5, $6)
       RETURNING *`,
-      [user_id, gym_id, isoDate, price, "active"],
+      [user_id, gym_id, isoDate, price, "active", config.slot_index ?? null],
     );
 
     // 6. Log wallet transaction
@@ -238,8 +238,10 @@ const cancelBooking = async (req, res) => {
       );
     }
 
-    // 4. Calculate refund (same logic as before)
-    const hoursRemaining = hoursUntil(booking.booking_date);
+    // 4. Calculate refund
+    const nowTr = now();
+    const bookingDay = parseDate(booking.booking_date);
+    const hoursRemaining = bookingDay ? bookingDay.diff(nowTr, "hour", true) : 0;
     let userRefund = 0;
     let ownerRefund = 0;
     const paidAmount = parseFloat(booking.paid_amount);
@@ -247,7 +249,7 @@ const cancelBooking = async (req, res) => {
     if (hoursRemaining >= 12) {
       userRefund = paidAmount;
       ownerRefund = 0;
-    } else if (hoursRemaining > 0) {
+    } else if (hoursRemaining > -24) {
       userRefund = paidAmount * 0.5;
       ownerRefund = paidAmount * 0.5;
     } else {
@@ -274,13 +276,22 @@ const cancelBooking = async (req, res) => {
       );
     }
 
-    // 7. Restore daily quota
-    await client.query(
-      `UPDATE gym_config
-       SET remaining_quota = remaining_quota + 1
-       WHERE gym_id = $1 AND target_date = $2`,
-      [booking.gym_id, booking.booking_date],
-    );
+    // 7. Restore daily quota for the specific slot (if slot_index is known)
+    if (booking.slot_index != null) {
+      await client.query(
+        `UPDATE gym_config
+         SET remaining_quota = remaining_quota + 1
+         WHERE gym_id = $1 AND target_date = $2 AND slot_index = $3`,
+        [booking.gym_id, booking.booking_date, booking.slot_index],
+      );
+    } else {
+      await client.query(
+        `UPDATE gym_config
+         SET remaining_quota = remaining_quota + 1
+         WHERE gym_id = $1 AND target_date = $2`,
+        [booking.gym_id, booking.booking_date],
+      );
+    }
 
     // 8. Update booking status
     const cancelledResult = await client.query(
