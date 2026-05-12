@@ -263,12 +263,13 @@ const cancelBooking = async (req, res) => {
     );
 
     // 6. Refund to owner (if applicable)
+    let owner_id = null;
     if (ownerRefund > 0) {
       const gymResult = await client.query(
         "SELECT owner_id FROM gyms WHERE id = $1",
         [booking.gym_id],
       );
-      const owner_id = gymResult.rows[0].owner_id;
+      owner_id = gymResult.rows[0].owner_id;
 
       await client.query(
         "UPDATE users SET wallet_balance = wallet_balance + $1 WHERE id = $2",
@@ -276,8 +277,17 @@ const cancelBooking = async (req, res) => {
       );
     }
 
-    // 7. Restore daily quota for the specific slot (if slot_index is known)
-    if (booking.slot_index != null) {
+    // 7. Restore daily quota
+    // New bookings have gym_config_id — use it directly
+    if (booking.gym_config_id) {
+      await client.query(
+        `UPDATE gym_config
+         SET remaining_quota = LEAST(remaining_quota + 1, total_quota)
+         WHERE id = $1`,
+        [booking.gym_config_id],
+      );
+    } else if (booking.slot_index != null) {
+      // Legacy bookings: match by gym_id + target_date + slot_index
       await client.query(
         `UPDATE gym_config
          SET remaining_quota = LEAST(remaining_quota + 1, total_quota)
@@ -285,6 +295,7 @@ const cancelBooking = async (req, res) => {
         [booking.gym_id, booking.booking_date, booking.slot_index],
       );
     } else {
+      // Very old bookings without slot_index
       await client.query(
         `UPDATE gym_config
          SET remaining_quota = LEAST(remaining_quota + 1, total_quota)
@@ -306,17 +317,11 @@ const cancelBooking = async (req, res) => {
       [user_id, id, userRefund, "refund"],
     );
 
-    if (ownerRefund > 0) {
-      const gymResult = await client.query(
-        "SELECT owner_id FROM gyms WHERE id = $1",
-        [booking.gym_id],
-      );
-      const owner_id = gymResult.rows[0].owner_id;
-
+    if (ownerRefund > 0 && owner_id) {
       await client.query(
         `INSERT INTO wallet_transactions (user_id, booking_id, amount, type)
          VALUES ($1, $2, $3, $4)`,
-        [owner_id, id, ownerRefund, "cancellation_fee"],
+        [owner_id, id, ownerRefund, "refund"],
       );
     }
 
