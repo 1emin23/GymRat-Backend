@@ -18,6 +18,10 @@ const changePassword = async (req, res) => {
       return res.status(404).json({ message: "Kullanıcı bulunamadı." });
     }
 
+    if (!user.password_hash) {
+      return res.status(400).json({ message: "Bu hesap için şifre ayarlanmamış. Google ile giriş yaptıysanız şifre değiştirilemez." });
+    }
+
     // 2. Mevcut şifreyi kontrol et
     const isMatch = await bcrypt.compare(currentPassword, user.password_hash);
     if (!isMatch) {
@@ -103,6 +107,10 @@ const login = async (req, res) => {
     }
 
     const user = userResult.rows[0];
+
+    if (!user.password_hash) {
+      return res.status(400).json({ message: "Bu hesap için şifre bulunmuyor. Lütfen Google ile giriş yapın." });
+    }
 
     // Şifre eşleşiyor mu?
     const isMatch = await bcrypt.compare(password, user.password_hash);

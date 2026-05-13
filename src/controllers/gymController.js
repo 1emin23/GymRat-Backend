@@ -17,7 +17,6 @@ const createGym = async (req, res) => {
     email,
     opening_time,
     closing_time,
-    membership_price,
     daily_capacity,
     amenities,
   } = req.body;
@@ -36,9 +35,9 @@ const createGym = async (req, res) => {
         .json({ message: "Sadece salon sahipleri salon ekleyebilir." });
     }
 
-    if (!name || !address || !city || !phone || !membership_price) {
+    if (!name || !address || !city || !phone) {
       return res.status(400).json({
-        message: "Salon adı, adres, şehir, telefon ve fiyat zorunludur.",
+        message: "Salon adı, adres, şehir ve telefon zorunludur.",
       });
     }
 
@@ -47,8 +46,8 @@ const createGym = async (req, res) => {
 
     // 2. DB'ye ekle
     const newGym = await pool.query(
-      `INSERT INTO gyms (owner_id, name, location_lat, location_long, description, address, city, district, phone, email, opening_time, closing_time, membership_price, amenities, cover_image, is_published) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) 
+      `INSERT INTO gyms (owner_id, name, location_lat, location_long, description, address, city, district, phone, email, opening_time, closing_time, amenities, cover_image, is_published)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
        RETURNING *`,
       [
         owner_id,
@@ -63,7 +62,6 @@ const createGym = async (req, res) => {
         email || null,
         opening_time || "06:00",
         closing_time || "23:00",
-        membership_price,
         amenities || null,
         null,
         false,
@@ -102,7 +100,7 @@ const createGym = async (req, res) => {
                price = EXCLUDED.price,
                is_open = EXCLUDED.is_open,
                updated_at = CURRENT_TIMESTAMP`,
-            [gymId, dateStr, slot.slot_index, slot.start_time, slot.end_time, daily_capacity, membership_price],
+             [gymId, dateStr, slot.slot_index, slot.start_time, slot.end_time, daily_capacity, null],
           );
         }
       }
@@ -213,7 +211,6 @@ const updateGym = async (req, res) => {
     city,
     district,
     phone,
-    membership_price,
     amenities,
     location_lat,
     location_long,
@@ -222,10 +219,10 @@ const updateGym = async (req, res) => {
 
   try {
     const updatedGym = await pool.query(
-      `UPDATE gyms SET name = COALESCE($1, name), description = COALESCE($2, description), address = COALESCE($3, address), city = COALESCE($4, city), 
-             district = COALESCE($5, district), phone = COALESCE($6, phone), membership_price = COALESCE($7, membership_price), amenities = COALESCE($8, amenities),
-             location_lat = COALESCE($9, location_lat), location_long = COALESCE($10, location_long), cover_image = COALESCE($11, cover_image)
-             WHERE id = $12 AND owner_id = $13 RETURNING *`,
+      `UPDATE gyms SET name = COALESCE($1, name), description = COALESCE($2, description), address = COALESCE($3, address), city = COALESCE($4, city),
+             district = COALESCE($5, district), phone = COALESCE($6, phone), amenities = COALESCE($7, amenities),
+             location_lat = COALESCE($8, location_lat), location_long = COALESCE($9, location_long), cover_image = COALESCE($10, cover_image)
+             WHERE id = $11 AND owner_id = $12 RETURNING *`,
       [
         name || null,
         description || null,
@@ -233,7 +230,6 @@ const updateGym = async (req, res) => {
         city || null,
         district || null,
         phone || null,
-        membership_price || null,
         amenities || null,
         location_lat || null,
         location_long || null,

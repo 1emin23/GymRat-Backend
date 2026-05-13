@@ -1,5 +1,5 @@
 const pool = require("../config/db");
-const { hoursUntil, toISODate, now, parseDate } = require("../utils/dateHelper");
+const { hoursUntil, toISODate, now, parseDate, today } = require("../utils/dateHelper");
 
 // @desc    Rezervasyonları Getir (User: kendi rezevasyonları, Owner: salon rezevasyonları)
 // @route   GET /api/bookings
@@ -126,6 +126,20 @@ const createBooking = async (req, res) => {
     }
 
     const config = configResult.rows[0];
+
+    // Geçmiş güne rezervasyon engeli
+    const todayStr = today();
+    if (isoDate < todayStr) {
+      throw new Error("Geçmiş bir güne rezervasyon yapılamaz.");
+    }
+
+    // Bugün ise slot başlangıç saati geçmiş mi kontrol et
+    if (isoDate === todayStr && config.start_time) {
+      const slotStart = parseDate(`${isoDate}T${config.start_time}`);
+      if (slotStart && slotStart.isBefore(now())) {
+        throw new Error("Bu slotun başlangıç saati geçmiş. Lütfen ileri bir zaman seçin.");
+      }
+    }
 
     if (config.is_open === false) {
       throw new Error("This slot is closed for booking.");

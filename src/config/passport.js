@@ -34,10 +34,10 @@ passport.use(
         let user = rows[0];
 
         if (!user) {
-          // 2) yoksa oluştur — email_verified true, password null/random
+          // 2) yoksa oluştur — Google'dan şifre gelmez, password_hash NULL kalır
           const insert = await db.query(
-            `INSERT INTO users (full_name, email, password, role, email_verified, phone_verified, provider)
-             VALUES ($1, $2, NULL, $3, TRUE, FALSE, 'google')
+            `INSERT INTO users (full_name, email, password_hash, role)
+             VALUES ($1, $2, NULL, $3)
              RETURNING *`,
             [fullName, email, role],
           );
