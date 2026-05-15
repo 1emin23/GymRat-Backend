@@ -19,7 +19,10 @@ const changePassword = async (req, res) => {
     }
 
     if (!user.password_hash) {
-      return res.status(400).json({ message: "Bu hesap için şifre ayarlanmamış. Google ile giriş yaptıysanız şifre değiştirilemez." });
+      return res.status(400).json({
+        message:
+          "Bu hesap için şifre ayarlanmamış. Google ile giriş yaptıysanız şifre değiştirilemez.",
+      });
     }
 
     // 2. Mevcut şifreyi kontrol et
@@ -78,7 +81,7 @@ const register = async (req, res) => {
     const token = jwt.sign(
       { id: user.id, role: user.role },
       process.env.JWT_SECRET,
-      { expiresIn: "30d" },
+      { expiresIn: "1h" },
     );
 
     return res.json({
@@ -109,7 +112,10 @@ const login = async (req, res) => {
     const user = userResult.rows[0];
 
     if (!user.password_hash) {
-      return res.status(400).json({ message: "Bu hesap için şifre bulunmuyor. Lütfen Google ile giriş yapın." });
+      return res.status(400).json({
+        message:
+          "Bu hesap için şifre bulunmuyor. Lütfen Google ile giriş yapın.",
+      });
     }
 
     // Şifre eşleşiyor mu?
@@ -122,7 +128,7 @@ const login = async (req, res) => {
     const token = jwt.sign(
       { id: user.id, role: user.role },
       process.env.JWT_SECRET,
-      { expiresIn: "30d" },
+      { expiresIn: "1m" },
     );
 
     return res.json({

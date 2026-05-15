@@ -26,6 +26,12 @@ function now() {
  */
 function parseDate(dateInput) {
   if (!dateInput) return null;
+
+  // YYYY-MM-DD formatında ise, saat bilgisi eklenerek Türkiye saatinde parse et
+  if (typeof dateInput === "string" && /^\d{4}-\d{2}-\d{2}$/.test(dateInput)) {
+    return dayjs.tz(`${dateInput} 00:00:00`, "YYYY-MM-DD HH:mm:ss", TIMEZONE);
+  }
+
   return dayjs(dateInput).tz(TIMEZONE);
 }
 

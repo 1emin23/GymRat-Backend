@@ -1,5 +1,11 @@
 const pool = require("../config/db");
-const { hoursUntil, toISODate, now, parseDate, today } = require("../utils/dateHelper");
+const {
+  hoursUntil,
+  toISODate,
+  now,
+  parseDate,
+  today,
+} = require("../utils/dateHelper");
 
 // @desc    Rezervasyonları Getir (User: kendi rezevasyonları, Owner: salon rezevasyonları)
 // @route   GET /api/bookings
@@ -13,8 +19,15 @@ const getBookings = async (req, res) => {
 
     if (role === "owner") {
       bookings = await pool.query(
-        `SELECT b.id, b.user_id, b.gym_id, b.booking_date, b.paid_amount, b.status, b.created_at,
-                g.name as gym_name, u.full_name, u.email,
+        `SELECT b.id, b.user_id, b.gym_id, b.booking_date, b.paid_amount,
+                CASE 
+                  WHEN b.status = 'active' 
+                    AND gc.end_time IS NOT NULL
+                    AND (b.booking_date::date + gc.end_time::time) < CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Istanbul'
+                  THEN 'no_show'
+                  ELSE b.status
+                END as status,
+                b.created_at, g.name as gym_name, u.full_name, u.email,
                 gc.start_time, gc.end_time
          FROM bookings b
          JOIN gyms g ON b.gym_id = g.id
@@ -31,7 +44,15 @@ const getBookings = async (req, res) => {
       );
     } else {
       bookings = await pool.query(
-        `SELECT b.id, b.user_id, b.gym_id, b.booking_date, b.paid_amount, b.status, b.created_at, g.name as gym_name,
+        `SELECT b.id, b.user_id, b.gym_id, b.booking_date, b.paid_amount,
+                CASE 
+                  WHEN b.status = 'active' 
+                    AND gc.end_time IS NOT NULL
+                    AND (b.booking_date::date + gc.end_time::time) < CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Istanbul'
+                  THEN 'no_show'
+                  ELSE b.status
+                END as status,
+                b.created_at, g.name as gym_name,
                 gc.start_time, gc.end_time
          FROM bookings b
          JOIN gyms g ON b.gym_id = g.id
@@ -137,7 +158,9 @@ const createBooking = async (req, res) => {
     if (isoDate === todayStr && config.start_time) {
       const slotStart = parseDate(`${isoDate}T${config.start_time}`);
       if (slotStart && slotStart.isBefore(now())) {
-        throw new Error("Bu slotun başlangıç saati geçmiş. Lütfen ileri bir zaman seçin.");
+        throw new Error(
+          "Bu slotun başlangıç saati geçmiş. Lütfen ileri bir zaman seçin.",
+        );
       }
     }
 
@@ -255,7 +278,9 @@ const cancelBooking = async (req, res) => {
     // 4. Calculate refund
     const nowTr = now();
     const bookingDay = parseDate(booking.booking_date);
-    const hoursRemaining = bookingDay ? bookingDay.diff(nowTr, "hour", true) : 0;
+    const hoursRemaining = bookingDay
+      ? bookingDay.diff(nowTr, "hour", true)
+      : 0;
     let userRefund = 0;
     let ownerRefund = 0;
     const paidAmount = parseFloat(booking.paid_amount);
