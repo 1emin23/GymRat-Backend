@@ -167,6 +167,44 @@ exports.uploadAvatar = multer({
   },
 }).single("avatar");
 
+// ==================== KYC DOCUMENTS UPLOAD (PRIVATE) ====================
+// Storage: /private/kyc/{user_id}/ [NOT publicly accessible]
+const kycStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const userId = req.user.id;
+    const uploadDir = path.join(
+      __dirname,
+      "../../private/kyc",
+      userId.toString(),
+    );
+    fs.mkdirSync(uploadDir, { recursive: true });
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    cb(null, `${file.fieldname}${ext}`);
+  },
+});
+
+const kycFilter = (req, file, cb) => {
+  const allowed = ["image/jpeg", "image/png", "image/jpg", "application/pdf"];
+  if (allowed.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error("Only JPEG, PNG, and PDF files are allowed."), false);
+  }
+};
+
+exports.uploadKyc = multer({
+  storage: kycStorage,
+  fileFilter: kycFilter,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB per file
+}).fields([
+  { name: "tax_plate", maxCount: 1 },
+  { name: "business_license", maxCount: 1 },
+  { name: "company_query", maxCount: 1 },
+]);
+
 // ==================== ERROR HANDLING MIDDLEWARE ====================
 exports.handleUploadError = (err, req, res, next) => {
   if (err instanceof multer.MulterError) {

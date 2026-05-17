@@ -41,6 +41,9 @@ pool.query("SELECT NOW()", (err, res) => {
 app.use("/api/auth", require("./src/routes/authRoutes"));
 app.use("/api/users", require("./src/routes/userRoutes"));
 
+// Admin Routes
+app.use("/api/admin", require("./src/routes/adminRoutes"));
+
 // Salon ve Cüzdan İşlemleri
 app.use("/api/gyms", require("./src/routes/gymRoutes.js"));
 app.use("/api/wallet", require("./src/routes/walletRoutes"));

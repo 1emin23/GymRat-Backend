@@ -3,42 +3,9 @@ const router = express.Router();
 const { protect } = require("../middlewares/authMiddleware");
 const pool = require("../config/db");
 const { sendOtpEmail } = require("../services/emailService");
+const { uploadKyc } = require("../utils/fileUpload");
 const multer = require("multer");
 const path = require("path");
-const fs = require("fs");
-
-// KYC belge yükleme ayarları
-const kycStorage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const userId = req.user.id;
-    const uploadDir = path.join(__dirname, "../../public/kyc", userId.toString());
-    fs.mkdirSync(uploadDir, { recursive: true });
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    cb(null, `${file.fieldname}${ext}`);
-  },
-});
-
-const kycFilter = (req, file, cb) => {
-  const allowed = ["image/jpeg", "image/png", "image/jpg", "application/pdf"];
-  if (allowed.includes(file.mimetype)) {
-    cb(null, true);
-  } else {
-    cb(new Error("Only JPEG, PNG, and PDF files are allowed."), false);
-  }
-};
-
-const uploadKyc = multer({
-  storage: kycStorage,
-  fileFilter: kycFilter,
-  limits: { fileSize: 5 * 1024 * 1024 },
-}).fields([
-  { name: "tax_plate", maxCount: 1 },
-  { name: "business_license", maxCount: 1 },
-  { name: "company_query", maxCount: 1 },
-]);
 
 function generateOtp() {
   return Math.floor(100000 + Math.random() * 900000).toString();
@@ -51,7 +18,14 @@ router.get("/profile", protect, async (req, res) => {
   try {
     // req.user.id middleware'den geliyor. DB'den güncel veriyi çekelim
     const user = await pool.query(
-      "SELECT id, full_name, email, role, wallet_balance, birth_date, phone, is_verified, approval_status, created_at FROM users WHERE id = $1",
+      `SELECT 
+        u.id, u.full_name, u.email, u.role, u.wallet_balance, 
+        u.birth_date, u.phone, u.is_verified, u.approval_status, u.created_at,
+        ks.rejection_reason,
+        ks.submission_count
+      FROM users u
+      LEFT JOIN kyc_submissions ks ON ks.user_id = u.id
+      WHERE u.id = $1`,
       [req.user.id],
     );
 
@@ -184,11 +158,51 @@ router.post("/kyc", protect, uploadKyc, async (req, res) => {
       });
     }
 
-    // Kullanıcının onay durumunu 'submitted' yap
+    const taxPlatePath = files.tax_plate[0].path;
+    const businessLicensePath = files.business_license[0].path;
+    const companyQueryPath = files.company_query[0].path;
+
+    await pool.query("BEGIN");
+
+    // Check if existing submission exists
+    const existing = await pool.query(
+      "SELECT id FROM kyc_submissions WHERE user_id = $1",
+      [userId],
+    );
+
+    if (existing.rows.length > 0) {
+      // Update existing (overwrite)
+      await pool.query(
+        `UPDATE kyc_submissions SET
+          tax_plate_path = $1,
+          business_license_path = $2,
+          company_query_path = $3,
+          status = 'submitted',
+          submitted_at = NOW(),
+          reviewed_by = NULL,
+          reviewed_at = NULL,
+          rejection_reason = NULL,
+          submission_count = submission_count + 1
+        WHERE user_id = $4`,
+        [taxPlatePath, businessLicensePath, companyQueryPath, userId],
+      );
+    } else {
+      // New submission
+      await pool.query(
+        `INSERT INTO kyc_submissions
+          (user_id, tax_plate_path, business_license_path, company_query_path, status, submitted_at, submission_count)
+        VALUES ($1, $2, $3, $4, 'submitted', NOW(), 1)`,
+        [userId, taxPlatePath, businessLicensePath, companyQueryPath],
+      );
+    }
+
+    // Update users table
     await pool.query(
       "UPDATE users SET approval_status = 'submitted' WHERE id = $1",
       [userId],
     );
+
+    await pool.query("COMMIT");
 
     res.json({
       success: true,
@@ -196,6 +210,7 @@ router.post("/kyc", protect, uploadKyc, async (req, res) => {
       approval_status: "submitted",
     });
   } catch (error) {
+    await pool.query("ROLLBACK");
     console.error("KYC Submit Error:", error);
     res.status(500).json({
       success: false,
