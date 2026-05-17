@@ -84,30 +84,18 @@ const register = async (req, res) => {
 
     // Yeni kullanıcıya otomatik OTP gönder
     const otpCode = generateOtp();
-    const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 dakika
-    console.log("otpExpiresAt in authcontoller", otpExpiresAt);
+    console.log(`[TEST OTP] Email: ${user.email} | Kod: ${otpCode}`);
+    const otpExpiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 dakika
     await pool.query(
-      "UPDATE users SET otp_code = $1, otp_expires_at = $2 WHERE id = $3",
-      [otpCode, otpExpiresAt, user.id],
+      "UPDATE users SET otp_code = $1, otp_expires_at = $2, otp_sent_at = NOW() WHERE id = $3",
+      [otpCode, otpExpiresAt, user.id]
     );
     await sendOtpEmail(user.email, otpCode);
 
-    // Token oluştur
-    const token = jwt.sign(
-      { id: user.id, role: user.role },
-      process.env.JWT_SECRET,
-      { expiresIn: "1d" },
-    );
-
     return res.json({
       success: true,
-      token,
-      user: {
-        id: user.id,
-        full_name: user.full_name,
-        role: user.role,
-        is_verified: user.is_verified,
-      },
+      message: "Kayıt başarılı. Lütfen e-posta adresinize gönderilen doğrulama kodunu girin.",
+      user: { id: user.id, full_name: user.full_name, email: user.email, role: user.role, is_verified: user.is_verified },
     });
   } catch (error) {
     console.error("Register Hatası:", error);
@@ -144,6 +132,15 @@ const login = async (req, res) => {
       return res.status(400).json({ message: "Hatalı şifre." });
     }
 
+    // E-posta doğrulanmamışsa girişe izin verme
+    if (!user.is_verified) {
+      return res.status(403).json({
+        message: "E-posta adresiniz doğrulanmamış. Lütfen e-postanıza gönderilen kodu girin.",
+        needsVerification: true,
+        email: user.email,
+      });
+    }
+
     // Token oluştur
     const token = jwt.sign(
       { id: user.id, role: user.role },
@@ -154,12 +151,7 @@ const login = async (req, res) => {
     return res.json({
       success: true,
       token,
-      user: {
-        id: user.id,
-        full_name: user.full_name,
-        role: user.role,
-        is_verified: user.is_verified,
-      },
+      user: { id: user.id, full_name: user.full_name, role: user.role, is_verified: user.is_verified },
     });
   } catch (error) {
     console.error("Login Hatası:", error);
