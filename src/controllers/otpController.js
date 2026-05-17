@@ -123,7 +123,7 @@ const verifyOtp = async (req, res) => {
 
     // Kullanıcı bilgisini çek
     const verifiedUserResult = await pool.query(
-      "SELECT id, full_name, email, role FROM users WHERE id = $1",
+      "SELECT id, full_name, email, role, approval_status FROM users WHERE id = $1",
       [user.id],
     );
     const verifiedUser = verifiedUserResult.rows[0];
@@ -139,7 +139,7 @@ const verifyOtp = async (req, res) => {
       success: true,
       message: "E-posta adresiniz başarıyla doğrulandı.",
       token,
-      user: { id: verifiedUser.id, full_name: verifiedUser.full_name, role: verifiedUser.role, is_verified: true },
+      user: { id: verifiedUser.id, full_name: verifiedUser.full_name, role: verifiedUser.role, is_verified: true, approval_status: verifiedUser.approval_status },
     });
   } catch (error) {
     console.error("Verify OTP Hatası:", error);
