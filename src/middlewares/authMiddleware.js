@@ -72,4 +72,29 @@ const requireVerified = async (req, res, next) => {
   }
 };
 
-module.exports = { protect, authorize, requireVerified };
+const requireApprovedOwner = async (req, res, next) => {
+  try {
+    const pool = require("../config/db");
+    const result = await pool.query(
+      "SELECT approval_status FROM users WHERE id = $1",
+      [req.user.id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "Kullanıcı bulunamadı." });
+    }
+
+    if (result.rows[0].approval_status !== "approved") {
+      return res.status(403).json({
+        message: "Bu işlem için işletme onayınızın tamamlanmış olması gerekir.",
+      });
+    }
+
+    next();
+  } catch (error) {
+    console.error("requireApprovedOwner hatası:", error);
+    return res.status(500).json({ message: "Sunucu hatası." });
+  }
+};
+
+module.exports = { protect, authorize, requireVerified, requireApprovedOwner };

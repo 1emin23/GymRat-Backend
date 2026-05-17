@@ -8,15 +8,32 @@ const path = require("path");
 const app = express();
 
 // 1. Middlewares
+const allowedOrigins = [
+  "https://www.gym-rats.app",
+  "https://gym-rats.app",
+  "http://localhost:5000",
+  "http://localhost:5173",
+];
+
 app.use(
   cors({
-    origin: [
-      "https://project-blueprint-builder-nine.vercel.app",
-      "http://localhost:5000",
-      "http://localhost:5173",
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("CORS policy violation: " + origin));
+      }
+    },
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "Accept",
+      "Origin",
+      "X-Requested-With",
     ],
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
-    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true,
+    optionsSuccessStatus: 200,
   }),
 );
 app.use(express.json());
