@@ -46,4 +46,30 @@ const authorize = (...roles) => {
   };
 };
 
-module.exports = { protect, authorize };
+// Sadece e-posta doğrulanmış kullanıcılar için koruma
+const requireVerified = async (req, res, next) => {
+  try {
+    const pool = require("../config/db");
+    const result = await pool.query(
+      "SELECT is_verified FROM users WHERE id = $1",
+      [req.user.id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "Kullanıcı bulunamadı." });
+    }
+
+    if (!result.rows[0].is_verified) {
+      return res
+        .status(403)
+        .json({ message: "E-posta adresinizi doğrulamanız gerekiyor." });
+    }
+
+    next();
+  } catch (error) {
+    console.error("requireVerified hatası:", error);
+    return res.status(500).json({ message: "Sunucu hatası." });
+  }
+};
+
+module.exports = { protect, authorize, requireVerified };

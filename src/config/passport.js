@@ -36,8 +36,8 @@ passport.use(
         if (!user) {
           // 2) yoksa oluştur — Google'dan şifre gelmez, password_hash NULL kalır
           const insert = await db.query(
-            `INSERT INTO users (full_name, email, password_hash, role)
-             VALUES ($1, $2, NULL, $3)
+            `INSERT INTO users (full_name, email, password_hash, role, is_verified)
+             VALUES ($1, $2, NULL, $3, TRUE)
              RETURNING *`,
             [fullName, email, role],
           );

@@ -8,11 +8,14 @@ const {
   login,
   changePassword,
 } = require("../controllers/authController");
+const { sendOtp, verifyOtp } = require("../controllers/otpController");
 const { protect } = require("../middlewares/authMiddleware");
 
 // Public routes
 router.post("/register", register);
 router.post("/login", login);
+router.post("/send-otp", sendOtp);
+router.post("/verify-otp", verifyOtp);
 router.post("/change-password", protect, changePassword);
 
 // 1) Başlat: frontend buraya yönlendirir

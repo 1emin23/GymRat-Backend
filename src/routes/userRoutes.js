@@ -10,7 +10,7 @@ router.get("/profile", protect, async (req, res) => {
   try {
     // req.user.id middleware'den geliyor. DB'den güncel veriyi çekelim
     const user = await pool.query(
-      "SELECT id, full_name, email, role, wallet_balance, birth_date, phone, created_at FROM users WHERE id = $1",
+      "SELECT id, full_name, email, role, wallet_balance, birth_date, phone, is_verified, created_at FROM users WHERE id = $1",
       [req.user.id],
     );
 
@@ -70,7 +70,7 @@ router.patch("/profile", protect, async (req, res) => {
         birth_date = COALESCE($3, birth_date),
         phone = COALESCE($4, phone)
       WHERE id = $5
-      RETURNING id, full_name, email, role, wallet_balance, birth_date, phone, created_at`,
+      RETURNING id, full_name, email, role, wallet_balance, birth_date, phone, is_verified, created_at`,
       [full_name, email, birth_date, phone, userId],
     );
 

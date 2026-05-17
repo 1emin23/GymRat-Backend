@@ -1,6 +1,11 @@
 const pool = require("../config/db");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const { sendOtpEmail } = require("../services/emailService");
+
+function generateOtp() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
 
 // Şifre değiştirme fonksiyonu
 const changePassword = async (req, res) => {
@@ -67,15 +72,25 @@ const register = async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const password_hash = await bcrypt.hash(password, salt);
 
-    // 5. Veritabanına kaydet (email_verified = false)
+    // 5. Veritabanına kaydet (is_verified = false)
     const newUser = await pool.query(
-      `INSERT INTO users 
-   (full_name, email, password_hash, role, birth_date, phone) 
-   VALUES ($1, $2, $3, $4, $5, $6) 
-   RETURNING id, full_name, email, role`,
+      `INSERT INTO users
+   (full_name, email, password_hash, role, birth_date, phone, is_verified)
+   VALUES ($1, $2, $3, $4, $5, $6, FALSE)
+   RETURNING id, full_name, email, role, is_verified`,
       [full_name, email, password_hash, role || "user", birth_date, phone],
     );
     const user = newUser.rows[0];
+
+    // Yeni kullanıcıya otomatik OTP gönder
+    const otpCode = generateOtp();
+    const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 dakika
+    console.log("otpExpiresAt in authcontoller", otpExpiresAt);
+    await pool.query(
+      "UPDATE users SET otp_code = $1, otp_expires_at = $2 WHERE id = $3",
+      [otpCode, otpExpiresAt, user.id],
+    );
+    await sendOtpEmail(user.email, otpCode);
 
     // Token oluştur
     const token = jwt.sign(
@@ -87,7 +102,12 @@ const register = async (req, res) => {
     return res.json({
       success: true,
       token,
-      user: { id: user.id, full_name: user.full_name, role: user.role },
+      user: {
+        id: user.id,
+        full_name: user.full_name,
+        role: user.role,
+        is_verified: user.is_verified,
+      },
     });
   } catch (error) {
     console.error("Register Hatası:", error);
@@ -100,7 +120,7 @@ const login = async (req, res) => {
   const { email, password } = req.body;
   try {
     const userResult = await pool.query(
-      `SELECT id, full_name, email, password_hash, role
+      `SELECT id, full_name, email, password_hash, role, is_verified
        FROM users WHERE email = $1`,
       [email],
     );
@@ -134,7 +154,12 @@ const login = async (req, res) => {
     return res.json({
       success: true,
       token,
-      user: { id: user.id, full_name: user.full_name, role: user.role },
+      user: {
+        id: user.id,
+        full_name: user.full_name,
+        role: user.role,
+        is_verified: user.is_verified,
+      },
     });
   } catch (error) {
     console.error("Login Hatası:", error);
