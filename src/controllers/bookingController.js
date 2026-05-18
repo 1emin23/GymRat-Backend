@@ -5,6 +5,8 @@ const {
   now,
   parseDate,
   today,
+  dayjs,
+  TIMEZONE,
 } = require("../utils/dateHelper");
 
 // @desc    Rezervasyonları Getir (User: kendi rezevasyonları, Owner: salon rezevasyonları)
@@ -24,7 +26,7 @@ const getBookings = async (req, res) => {
                   WHEN b.status = 'active' 
                     AND gc.end_time IS NOT NULL
                     AND (b.booking_date::date + gc.end_time::time) < CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Istanbul'
-                  THEN 'no_show'
+                  THEN 'noshow'
                   ELSE b.status
                 END as status,
                 b.created_at, g.name as gym_name, u.full_name, u.email,
@@ -34,10 +36,7 @@ const getBookings = async (req, res) => {
          JOIN users u ON b.user_id = u.id
          LEFT JOIN gym_config gc ON gc.gym_id = b.gym_id
            AND gc.target_date = b.booking_date
-           AND gc.slot_index = (
-             SELECT MIN(gc2.slot_index) FROM gym_config gc2
-             WHERE gc2.gym_id = b.gym_id AND gc2.target_date = b.booking_date
-           )
+           AND gc.slot_index = COALESCE(b.slot_index, 1)
          WHERE g.owner_id = $1
          ORDER BY b.booking_date DESC`,
         [user_id],
@@ -49,7 +48,7 @@ const getBookings = async (req, res) => {
                   WHEN b.status = 'active' 
                     AND gc.end_time IS NOT NULL
                     AND (b.booking_date::date + gc.end_time::time) < CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Istanbul'
-                  THEN 'no_show'
+                  THEN 'noshow'
                   ELSE b.status
                 END as status,
                 b.created_at, g.name as gym_name,
@@ -58,10 +57,7 @@ const getBookings = async (req, res) => {
          JOIN gyms g ON b.gym_id = g.id
          LEFT JOIN gym_config gc ON gc.gym_id = b.gym_id
            AND gc.target_date = b.booking_date
-           AND gc.slot_index = (
-             SELECT MIN(gc2.slot_index) FROM gym_config gc2
-             WHERE gc2.gym_id = b.gym_id AND gc2.target_date = b.booking_date
-           )
+           AND gc.slot_index = COALESCE(b.slot_index, 1)
          WHERE b.user_id = $1
          ORDER BY b.booking_date DESC`,
         [user_id],
@@ -88,6 +84,9 @@ const getBookings = async (req, res) => {
  */
 const createBooking = async (req, res) => {
   const { gym_id, booking_date, slot_index } = req.body;
+  console.log(
+    `kullanıcı ${req.user.id}: ${booking_date} tarih için rezervasyon yapmak istiyor`,
+  );
   const user_id = req.user.id;
 
   if (!gym_id || !booking_date) {
@@ -133,10 +132,10 @@ const createBooking = async (req, res) => {
     if (configResult.rows.length === 0) {
       // Debug: check if any config exists at all for this gym+date
       const debugResult = await client.query(
-        `SELECT id, slot_index, is_open, remaining_quota, target_date FROM gym_config WHERE gym_id = $1 AND target_date = $2`,
+        `SELECT id, slot_index, is_open, remaining_quota, target_date, start_time, end_time, price FROM gym_config WHERE gym_id = $1 AND target_date = $2`,
         [gym_id, isoDate],
       );
-      console.error("Booking config miss:", {
+      console.error("[DEBUG createBooking] Config miss:", {
         gym_id,
         isoDate,
         slot_index,
@@ -156,7 +155,7 @@ const createBooking = async (req, res) => {
 
     // Bugün ise slot başlangıç saati geçmiş mi kontrol et
     if (isoDate === todayStr && config.start_time) {
-      const slotStart = parseDate(`${isoDate}T${config.start_time}`);
+      const slotStart = dayjs.tz(`${isoDate} ${config.start_time}`, "YYYY-MM-DD HH:mm:ss", TIMEZONE);
       if (slotStart && slotStart.isBefore(now())) {
         throw new Error(
           "Bu slotun başlangıç saati geçmiş. Lütfen ileri bir zaman seçin.",
@@ -199,6 +198,7 @@ const createBooking = async (req, res) => {
       "UPDATE gym_config SET remaining_quota = remaining_quota - 1 WHERE id = $1",
       [config.id],
     );
+    console.log("isodate olması gerek timestamp", isoDate);
 
     // 5. Create booking record
     const bookingResult = await client.query(

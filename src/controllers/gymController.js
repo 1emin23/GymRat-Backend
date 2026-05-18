@@ -215,14 +215,54 @@ const updateGym = async (req, res) => {
     location_lat,
     location_long,
     cover_image,
+    removed_images,
   } = req.body;
 
   try {
+    // 1. Mevcut salonu getir (images alanı için)
+    const currentGym = await pool.query(
+      "SELECT images, cover_image FROM gyms WHERE id = $1 AND owner_id = $2",
+      [gymId, req.user.id],
+    );
+
+    if (currentGym.rows.length === 0) {
+      return res
+        .status(404)
+        .json({ message: "Salon bulunamadı veya yetkiniz yok." });
+    }
+
+    let currentImages = currentGym.rows[0].images || [];
+    let newCoverImage = cover_image !== undefined ? cover_image : currentGym.rows[0].cover_image;
+
+    // 2. Silinecek görselleri çıkar ve fiziksel dosyaları sil
+    if (Array.isArray(removed_images) && removed_images.length > 0) {
+      for (const imagePath of removed_images) {
+        // Fiziksel dosyayı sil
+        const decodedPath = decodeURIComponent(imagePath);
+        const fullPath = path.join(__dirname, "..", decodedPath);
+        if (fs.existsSync(fullPath)) {
+          fs.unlinkSync(fullPath);
+        }
+      }
+
+      // Veritabanı dizisinden çıkar
+      currentImages = currentImages.filter(
+        (img) => !removed_images.includes(img),
+      );
+
+      // Eğer silinen görsel cover_image ise, cover_image'ı da temizle
+      if (removed_images.includes(currentGym.rows[0].cover_image)) {
+        newCoverImage = null;
+      }
+    }
+
+    // 3. Salonu güncelle
     const updatedGym = await pool.query(
       `UPDATE gyms SET name = COALESCE($1, name), description = COALESCE($2, description), address = COALESCE($3, address), city = COALESCE($4, city),
              district = COALESCE($5, district), phone = COALESCE($6, phone), amenities = COALESCE($7, amenities),
-             location_lat = COALESCE($8, location_lat), location_long = COALESCE($9, location_long), cover_image = COALESCE($10, cover_image)
-             WHERE id = $11 AND owner_id = $12 RETURNING *`,
+             location_lat = COALESCE($8, location_lat), location_long = COALESCE($9, location_long), cover_image = COALESCE($10, cover_image),
+             images = $11
+             WHERE id = $12 AND owner_id = $13 RETURNING *`,
       [
         name || null,
         description || null,
@@ -233,17 +273,12 @@ const updateGym = async (req, res) => {
         amenities || null,
         location_lat || null,
         location_long || null,
-        cover_image || null,
+        newCoverImage,
+        currentImages,
         gymId,
         req.user.id,
       ],
     );
-
-    if (updatedGym.rows.length === 0) {
-      return res
-        .status(404)
-        .json({ message: "Salon bulunamadı veya yetkiniz yok." });
-    }
 
     res.json({ success: true, gym: updatedGym.rows[0] });
   } catch (error) {

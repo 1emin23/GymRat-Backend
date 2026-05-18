@@ -170,7 +170,7 @@ const setGymConfig = async (req, res) => {
   try {
     // 1. Salon mevcut mu ve yetki kontrolü
     const gymExists = await client.query(
-      "SELECT id, owner_id FROM gyms WHERE id = $1",
+      "SELECT id, owner_id, opening_time, closing_time FROM gyms WHERE id = $1",
       [gymId],
     );
 
@@ -188,8 +188,49 @@ const setGymConfig = async (req, res) => {
       });
     }
 
+    // 1b. Slot sınırları: açılış/kapanış saatleri kontrolü
+    // DB'den gelen saat HH:MM:SS olabilir, slot değerleri HH:MM → normalize et
+    const rawOpening = gymExists.rows[0].opening_time;
+    const rawClosing = gymExists.rows[0].closing_time;
+    const gymOpening = rawOpening ? rawOpening.toString().slice(0, 5) : null;
+    const gymClosing = rawClosing ? rawClosing.toString().slice(0, 5) : null;
+
+    const slot1 = normalizedSlots.find((s) => s.slot_index === 1);
+    if (slot1 && gymOpening && slot1.start_time < gymOpening) {
+      slotErrors.push({
+        field: "slots[0].start_time",
+        message: "Slot 1 cannot start before the gym's opening time",
+      });
+    }
+
+    const slot3 = normalizedSlots.find((s) => s.slot_index === 3);
+    if (slot3 && gymClosing && slot3.end_time > gymClosing) {
+      slotErrors.push({
+        field: "slots[2].end_time",
+        message: "Slot 3 cannot end after the gym's closing time",
+      });
+    }
+
+    if (slotErrors.length > 0) {
+      return res.status(422).json({
+        success: false,
+        message: "Validation failed",
+        errors: slotErrors,
+      });
+    }
+
     // 2. Hedef tarihleri oluştur
     const targetDates = generateTargetDates(selected_days, apply_monthly);
+
+    console.log("[DEBUG generateTargetDates]", {
+      baseDate: dayjs().tz(TIMEZONE).startOf("day").format("YYYY-MM-DD HH:mm:ss Z"),
+      nowRaw: dayjs().format("YYYY-MM-DD HH:mm:ss"),
+      nowTz: dayjs().tz(TIMEZONE).format("YYYY-MM-DD HH:mm:ss Z"),
+      apply_monthly,
+      daysToGenerate: apply_monthly ? 30 : 7,
+      selected_days,
+      targetDates,
+    });
 
     if (targetDates.length === 0) {
       return res.status(400).json({
@@ -208,6 +249,17 @@ const setGymConfig = async (req, res) => {
        WHERE gym_id = $1
        AND target_date = ANY($2)
        AND slot_index IS NULL`,
+      [gymId, targetDates],
+    );
+
+    // 4b. Kullanıcının SEÇMEDİĞİ günlerin config'ini kapat (gelecek tarihlerde)
+    //     Böylece sadece selected_days'teki günler is_open = TRUE kalır
+    await client.query(
+      `UPDATE gym_config
+       SET is_open = FALSE, updated_at = CURRENT_TIMESTAMP
+       WHERE gym_id = $1
+         AND target_date >= CURRENT_DATE
+         AND target_date <> ALL($2)`,
       [gymId, targetDates],
     );
 
@@ -257,6 +309,13 @@ const setGymConfig = async (req, res) => {
     // 6. Transaction commit
     await client.query("COMMIT");
 
+    console.log("[DEBUG setGymConfig SUCCESS]", {
+      gymId,
+      upsertedCount,
+      targetDates,
+      dateRange: { from: targetDates[0], to: targetDates[targetDates.length - 1] },
+    });
+
     res.status(200).json({
       success: true,
       message: "Gym configuration saved successfully",
@@ -267,6 +326,7 @@ const setGymConfig = async (req, res) => {
           from: targetDates[0],
           to: targetDates[targetDates.length - 1],
         },
+        target_dates: targetDates,
         selected_days,
         apply_monthly,
       },
@@ -303,7 +363,10 @@ function generateTargetDates(selected_days, apply_monthly) {
     // dayjs: 0=Sunday, 1=Monday, ..., 6=Saturday
     const selectedDaysIndex = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
 
-    if (selected_days[selectedDaysIndex] === true) {
+    const isSelected = selected_days[selectedDaysIndex] === true;
+    console.log(`[DEBUG generateTargetDates] i=${i}, date=${currentDate.format("YYYY-MM-DD")}, dayOfWeek=${dayOfWeek}, selectedDaysIndex=${selectedDaysIndex}, isSelected=${isSelected}, selectedValue=${selected_days[selectedDaysIndex]}`);
+
+    if (isSelected) {
       targetDates.push(currentDate.format("YYYY-MM-DD"));
     }
   }
