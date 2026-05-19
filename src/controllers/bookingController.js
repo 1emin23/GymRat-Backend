@@ -251,9 +251,15 @@ const cancelBooking = async (req, res) => {
   try {
     await client.query("BEGIN");
 
-    // 1. Fetch booking
+    // 1. Fetch booking (with slot start time for accurate refund calculation)
     const bookingResult = await client.query(
-      "SELECT * FROM bookings WHERE id = $1 FOR UPDATE",
+      `SELECT b.*, gc.start_time, gc.end_time
+       FROM bookings b
+       LEFT JOIN gym_config gc ON gc.gym_id = b.gym_id
+         AND gc.target_date = b.booking_date
+         AND gc.slot_index = COALESCE(b.slot_index, 1)
+       WHERE b.id = $1
+       FOR UPDATE`,
       [id],
     );
 
@@ -275,12 +281,30 @@ const cancelBooking = async (req, res) => {
       );
     }
 
-    // 4. Calculate refund
+    // 4. Calculate refund based on SLOT start time (not just day start)
     const nowTr = now();
-    const bookingDay = parseDate(booking.booking_date);
-    const hoursRemaining = bookingDay
-      ? bookingDay.diff(nowTr, "hour", true)
+
+    // Daha güvenli: tek adımda timezone'lu parse et.
+    // parseDate + .hour() kombinasyonu bazı dayjs versiyonlarında
+    // UTC/local karışıklığına yol açabiliyor.
+    const rawTime = booking.start_time || "00:00:00";
+    const timePart = rawTime.length === 5 ? `${rawTime}:00` : rawTime; // "08:00" → "08:00:00"
+    const bookingDateTime = dayjs.tz(
+      `${booking.booking_date} ${timePart}`,
+      "YYYY-MM-DD HH:mm:ss",
+      TIMEZONE,
+    );
+
+    const hoursRemaining = bookingDateTime
+      ? bookingDateTime.diff(nowTr, "hour", true)
       : 0;
+
+    // DEBUG LOGS - timezone check
+    console.log("[CANCEL DEBUG] nowTr:", nowTr.format());
+    console.log("[CANCEL DEBUG] booking_date:", booking.booking_date);
+    console.log("[CANCEL DEBUG] start_time:", booking.start_time);
+    console.log("[CANCEL DEBUG] bookingDateTime:", bookingDateTime.format());
+    console.log("[CANCEL DEBUG] hoursRemaining:", hoursRemaining);
     let userRefund = 0;
     let ownerRefund = 0;
     const paidAmount = parseFloat(booking.paid_amount);
