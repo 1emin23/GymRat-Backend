@@ -14,7 +14,6 @@ const createGym = async (req, res) => {
     city,
     district,
     phone,
-    email,
     opening_time,
     closing_time,
     daily_capacity,
@@ -46,8 +45,8 @@ const createGym = async (req, res) => {
 
     // 2. DB'ye ekle
     const newGym = await pool.query(
-      `INSERT INTO gyms (owner_id, name, location_lat, location_long, description, address, city, district, phone, email, opening_time, closing_time, amenities, cover_image, is_published)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+      `INSERT INTO gyms (owner_id, name, location_lat, location_long, description, address, city, district, phone, opening_time, closing_time, amenities, cover_image, is_published)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
        RETURNING *`,
       [
         owner_id,
@@ -59,7 +58,6 @@ const createGym = async (req, res) => {
         city,
         district || null,
         phone,
-        email || null,
         opening_time || "06:00",
         closing_time || "23:00",
         amenities || null,

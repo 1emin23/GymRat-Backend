@@ -18,9 +18,9 @@ router.get("/profile", protect, async (req, res) => {
   try {
     // req.user.id middleware'den geliyor. DB'den güncel veriyi çekelim
     const user = await pool.query(
-      `SELECT 
-        u.id, u.full_name, u.email, u.role, u.wallet_balance, 
-        u.birth_date, u.phone, u.is_verified, u.approval_status, u.created_at,
+      `SELECT
+        u.id, u.full_name, u.email, u.role, u.wallet_balance,
+        u.phone, u.is_verified, u.approval_status, u.created_at,
         ks.rejection_reason,
         ks.submission_count
       FROM users u
@@ -53,7 +53,7 @@ router.get("/profile", protect, async (req, res) => {
 // @access  Private (Sadece giriş yapanlar)
 router.patch("/profile", protect, async (req, res) => {
   try {
-    const { full_name, email, birth_date, phone } = req.body;
+    const { full_name, email, phone } = req.body;
     const userId = req.user.id;
 
     // Mevcut kullanıcı bilgilerini al
@@ -114,11 +114,10 @@ router.patch("/profile", protect, async (req, res) => {
     const updatedUser = await pool.query(
       `UPDATE users SET
         full_name = COALESCE($1, full_name),
-        birth_date = COALESCE($2, birth_date),
-        phone = COALESCE($3, phone)
-      WHERE id = $4
-      RETURNING id, full_name, email, role, wallet_balance, birth_date, phone, is_verified, approval_status, created_at`,
-      [full_name, birth_date, phone, userId],
+        phone = COALESCE($2, phone)
+      WHERE id = $3
+      RETURNING id, full_name, email, role, wallet_balance, phone, is_verified, approval_status, created_at`,
+      [full_name, phone, userId],
     );
 
     if (updatedUser.rows.length === 0) {

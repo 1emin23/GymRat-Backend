@@ -35,8 +35,8 @@ async function createAdmin() {
 
     // Create admin user
     await pool.query(
-      `INSERT INTO users (full_name, email, password_hash, role, is_verified, approval_status, birth_date, phone)
-       VALUES ($1, $2, $3, 'admin', TRUE, 'approved', NULL, NULL)`,
+      `INSERT INTO users (full_name, email, password_hash, role, is_verified, approval_status, phone)
+       VALUES ($1, $2, $3, 'admin', TRUE, 'approved', NULL)`,
       [fullName, email.toLowerCase(), passwordHash],
     );
 

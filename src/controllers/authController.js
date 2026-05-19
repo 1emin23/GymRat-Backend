@@ -56,7 +56,7 @@ const changePassword = async (req, res) => {
 // ==================== REGISTER ====================
 const register = async (req, res) => {
   console.log("Register başladı");
-  const { full_name, email, password, role, birth_date, phone } = req.body;
+  const { full_name, email, password, role, phone } = req.body;
 
   try {
     // 1. Email zaten kullanılıyor mu kontrol et
@@ -75,10 +75,10 @@ const register = async (req, res) => {
     // 5. Veritabanına kaydet (is_verified = false, approval_status = 'pending')
     const newUser = await pool.query(
       `INSERT INTO users
-   (full_name, email, password_hash, role, birth_date, phone, is_verified, approval_status)
-   VALUES ($1, $2, $3, $4, $5, $6, FALSE, 'pending')
+   (full_name, email, password_hash, role, phone, is_verified, approval_status)
+   VALUES ($1, $2, $3, $4, $5, FALSE, 'pending')
    RETURNING id, full_name, email, role, is_verified, approval_status`,
-      [full_name, email, password_hash, role || "user", birth_date, phone],
+      [full_name, email, password_hash, role || "user", phone],
     );
     const user = newUser.rows[0];
 
@@ -88,14 +88,22 @@ const register = async (req, res) => {
     const otpExpiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 dakika
     await pool.query(
       "UPDATE users SET otp_code = $1, otp_expires_at = $2, otp_sent_at = NOW() WHERE id = $3",
-      [otpCode, otpExpiresAt, user.id]
+      [otpCode, otpExpiresAt, user.id],
     );
     await sendOtpEmail(user.email, otpCode);
 
     return res.json({
       success: true,
-      message: "Kayıt başarılı. Lütfen e-posta adresinize gönderilen doğrulama kodunu girin.",
-      user: { id: user.id, full_name: user.full_name, email: user.email, role: user.role, is_verified: user.is_verified, approval_status: user.approval_status },
+      message:
+        "Kayıt başarılı. Lütfen e-posta adresinize gönderilen doğrulama kodunu girin.",
+      user: {
+        id: user.id,
+        full_name: user.full_name,
+        email: user.email,
+        role: user.role,
+        is_verified: user.is_verified,
+        approval_status: user.approval_status,
+      },
     });
   } catch (error) {
     console.error("Register Hatası:", error);
@@ -135,7 +143,8 @@ const login = async (req, res) => {
     // E-posta doğrulanmamışsa girişe izin verme
     if (!user.is_verified) {
       return res.status(403).json({
-        message: "E-posta adresiniz doğrulanmamış. Lütfen e-postanıza gönderilen kodu girin.",
+        message:
+          "E-posta adresiniz doğrulanmamış. Lütfen e-postanıza gönderilen kodu girin.",
         needsVerification: true,
         email: user.email,
       });
@@ -151,7 +160,13 @@ const login = async (req, res) => {
     return res.json({
       success: true,
       token,
-      user: { id: user.id, full_name: user.full_name, role: user.role, is_verified: user.is_verified, approval_status: user.approval_status },
+      user: {
+        id: user.id,
+        full_name: user.full_name,
+        role: user.role,
+        is_verified: user.is_verified,
+        approval_status: user.approval_status,
+      },
     });
   } catch (error) {
     console.error("Login Hatası:", error);
