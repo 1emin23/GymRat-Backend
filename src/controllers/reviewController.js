@@ -38,9 +38,25 @@ const addReview = async (req, res) => {
   const { gym_id, booking_id, rating, comment } = req.body;
   const user_id = req.user.id;
 
-  if (!gym_id || !booking_id || !rating) {
+  if (
+    gym_id === null || gym_id === undefined ||
+    booking_id === null || booking_id === undefined ||
+    rating === null || rating === undefined
+  ) {
     return res.status(400).json({
       message: "gym_id, booking_id ve rating zorunludur.",
+    });
+  }
+
+  if (typeof gym_id !== "number" || typeof booking_id !== "number" || typeof rating !== "number") {
+    return res.status(400).json({
+      message: "gym_id, booking_id ve rating sayı olmalıdır.",
+    });
+  }
+
+  if (rating < 1 || rating > 5) {
+    return res.status(400).json({
+      message: "rating 1 ile 5 arasında olmalıdır.",
     });
   }
 
