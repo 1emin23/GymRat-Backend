@@ -9,60 +9,33 @@ const {
   TIMEZONE,
 } = require("../utils/dateHelper");
 
-// @desc    Rezervasyonları Getir (User: kendi rezevasyonları, Owner: salon rezevasyonları)
+// @desc    Kullanıcının kendi rezervasyonlarını getir
 // @route   GET /api/bookings
 // @access  Private
 const getBookings = async (req, res) => {
   const user_id = req.user.id;
-  const role = req.user.role;
 
   try {
-    let bookings;
-
-    if (role === "owner") {
-      bookings = await pool.query(
-        `SELECT b.id, b.user_id, b.gym_id, b.booking_date, b.paid_amount,
-                CASE 
-                  WHEN b.status = 'active' 
-                    AND gc.end_time IS NOT NULL
-                    AND (b.booking_date::date + gc.end_time::time) < CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Istanbul'
-                  THEN 'noshow'
-                  ELSE b.status
-                END as status,
-                b.created_at, g.name as gym_name, u.full_name, u.email,
-                gc.start_time, gc.end_time
-         FROM bookings b
-         JOIN gyms g ON b.gym_id = g.id
-         JOIN users u ON b.user_id = u.id
-         LEFT JOIN gym_config gc ON gc.gym_id = b.gym_id
-           AND gc.target_date = b.booking_date
-           AND gc.slot_index = COALESCE(b.slot_index, 1)
-         WHERE g.owner_id = $1
-         ORDER BY b.booking_date DESC`,
-        [user_id],
-      );
-    } else {
-      bookings = await pool.query(
-        `SELECT b.id, b.user_id, b.gym_id, b.booking_date, b.paid_amount,
-                CASE 
-                  WHEN b.status = 'active' 
-                    AND gc.end_time IS NOT NULL
-                    AND (b.booking_date::date + gc.end_time::time) < CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Istanbul'
-                  THEN 'noshow'
-                  ELSE b.status
-                END as status,
-                b.created_at, g.name as gym_name,
-                gc.start_time, gc.end_time
-         FROM bookings b
-         JOIN gyms g ON b.gym_id = g.id
-         LEFT JOIN gym_config gc ON gc.gym_id = b.gym_id
-           AND gc.target_date = b.booking_date
-           AND gc.slot_index = COALESCE(b.slot_index, 1)
-         WHERE b.user_id = $1
-         ORDER BY b.booking_date DESC`,
-        [user_id],
-      );
-    }
+    const bookings = await pool.query(
+      `SELECT b.id, b.user_id, b.gym_id, b.booking_date, b.paid_amount,
+              CASE 
+                WHEN b.status = 'active' 
+                  AND gc.end_time IS NOT NULL
+                  AND (b.booking_date::date + gc.end_time::time) < CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Istanbul'
+                THEN 'noshow'
+                ELSE b.status
+              END as status,
+              b.created_at, g.name as gym_name,
+              gc.start_time, gc.end_time
+       FROM bookings b
+       JOIN gyms g ON b.gym_id = g.id
+       LEFT JOIN gym_config gc ON gc.gym_id = b.gym_id
+         AND gc.target_date = b.booking_date
+         AND gc.slot_index = COALESCE(b.slot_index, 1)
+       WHERE b.user_id = $1
+       ORDER BY b.booking_date DESC`,
+      [user_id],
+    );
 
     res.json({
       success: true,
@@ -72,6 +45,48 @@ const getBookings = async (req, res) => {
     console.error("Get Bookings Error:", error);
     res.status(500).json({
       message: "Rezervasyonlar getirilirken hata oluştu.",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Owner'ın salonuna gelen rezervasyonları getir
+// @route   GET /api/bookings/incoming
+// @access  Private + Owner
+const getIncomingBookings = async (req, res) => {
+  const user_id = req.user.id;
+
+  try {
+    const bookings = await pool.query(
+      `SELECT b.id, b.user_id, b.gym_id, b.booking_date, b.paid_amount,
+              CASE 
+                WHEN b.status = 'active' 
+                  AND gc.end_time IS NOT NULL
+                  AND (b.booking_date::date + gc.end_time::time) < CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Istanbul'
+                THEN 'noshow'
+                ELSE b.status
+              END as status,
+              b.created_at, g.name as gym_name, u.full_name, u.email,
+              gc.start_time, gc.end_time
+       FROM bookings b
+       JOIN gyms g ON b.gym_id = g.id
+       JOIN users u ON b.user_id = u.id
+       LEFT JOIN gym_config gc ON gc.gym_id = b.gym_id
+         AND gc.target_date = b.booking_date
+         AND gc.slot_index = COALESCE(b.slot_index, 1)
+       WHERE g.owner_id = $1
+       ORDER BY b.booking_date DESC`,
+      [user_id],
+    );
+
+    res.json({
+      success: true,
+      data: bookings.rows,
+    });
+  } catch (error) {
+    console.error("Get Incoming Bookings Error:", error);
+    res.status(500).json({
+      message: "Gelen rezervasyonlar getirilirken hata oluştu.",
       error: error.message,
     });
   }
@@ -155,7 +170,11 @@ const createBooking = async (req, res) => {
 
     // Bugün ise slot başlangıç saati geçmiş mi kontrol et
     if (isoDate === todayStr && config.start_time) {
-      const slotStart = dayjs.tz(`${isoDate} ${config.start_time}`, "YYYY-MM-DD HH:mm:ss", TIMEZONE);
+      const slotStart = dayjs.tz(
+        `${isoDate} ${config.start_time}`,
+        "YYYY-MM-DD HH:mm:ss",
+        TIMEZONE,
+      );
       if (slotStart && slotStart.isBefore(now())) {
         throw new Error(
           "Bu slotun başlangıç saati geçmiş. Lütfen ileri bir zaman seçin.",
@@ -435,6 +454,7 @@ const getBookingById = async (req, res) => {
 
 module.exports = {
   getBookings,
+  getIncomingBookings,
   createBooking,
   cancelBooking,
   getBookingById,
